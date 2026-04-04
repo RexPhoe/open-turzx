@@ -150,8 +150,4 @@ class FpsSensor(SensorBackend):
 
         # Always report the sensor so it shows in the sensor list.
         # Shows 0 if RTSS is running but no 3D app is active.
-        return [
-            SensorReading(
-                "sys.fps", "Game FPS", round(fps), "FPS", "system"
-            )
-        ]
+        return [SensorReading("sys.fps", "Game FPS", round(fps), "FPS", "system")]

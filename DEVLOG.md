@@ -16,12 +16,12 @@
 | Rotacion pantalla | ✅ Configurable | Layout.rotation (0/90/180/270), default 180 |
 | App daemon + tray | ✅ Phase 1 | PySide6 tray, sensores psutil, render loop |
 | Visual editor | ✅ Phase 2 | Drag-and-drop, props panel, fondos, rotacion config |
-| Dynamic profiles | ⏳ Phase 3 | Cambio automatico segun programa activo |
+| Dynamic profiles | ✅ Phase 3 | Tres modos: static, rotative, reactive |
 | BOB (avatar virtual) | ⏳ Phase 4 | Personaje animado con IA — experimental |
 | Compatibilidad Linux | 🔧 En progreso | libusb + psutil + PySide6 = cross-platform |
 | Device se bloquea | ⚠️ Confirmado | Secuencias largas (>5-6 cmds) bloquean firmware |
 
-**FASE ACTUAL: Phase 3 — Dynamic Profiles (pendiente)**
+**FASE ACTUAL: Phase 4 — BOB (pendiente)**
 
 **Protocolo resuelto (2026-04-02):**
 - CMD 101 (`SEND_JPEG`) muestra imagen; CMD 102 es aceptado pero NO renderiza
@@ -1058,4 +1058,74 @@ ETW requiere admin. D3DKMT sin API publica para FPS.
 21. Shared memory Win32: preferir `ctypes.string_at(addr, size)` sobre `ctypes.memmove(buf, addr, size)` para lectura — evita access violations con punteros 64-bit.
 22. Game FPS en Windows sin admin: unica via practica es RTSS shared memory. DwmGetCompositionTimingInfo roto en Win11 24H2+, ETW requiere admin.
 23. Auto-save es anti-pattern para editores visuales — usar dirty flag + save explícito.
+
+---
+
+## Sesion 5 — Phase 3: Display Modes (2026-04-04)
+
+### Objetivo
+Implementar tres modos de display:
+- **Static**: usuario elige un layout fijo (comportamiento actual)
+- **Rotative**: ciclar entre layouts seleccionados con intervalo configurable
+- **Reactive**: cambiar layout según la aplicación en primer plano
+
+### Arquitectura
+
+```
+ModeController (main thread, QTimers)
+    ├── rotative: QTimer cada N segundos → set_active(next_layout)
+    ├── reactive: QTimer cada 1s → lee app.process → set_active(matched)
+    └── emite layout_switched signal → editor sincroniza combo + canvas
+```
+
+El render thread ya hace poll de `config.active_layout` cada tick — no requiere cambios.
+ModeController se pausa cuando el editor tiene cambios sin guardar (`_dirty`).
+
+### Cambios
+
+#### `config.py` — Modelos de datos + ConfigManager extendido
+- 4 dataclasses nuevos: `ReactiveRule`, `RotativeConfig`, `ReactiveConfig`, `ModeConfig`
+- `ConfigManager`: `_read_state()` / `_write_state()` reemplazan `_read_active_name()` / `_write_active_name()`
+- Nuevo: `mode_config` property, `save_mode_config()` method
+- `state.json` ahora persiste tanto `active_layout` como `mode` config
+
+#### `modes.py` — NUEVO — ModeController
+- `ModeController(QObject)` con `layout_switched = Signal(str)`
+- `_rotate_timer`: avanza al siguiente layout en la lista, filtra layouts eliminados
+- `_react_timer`: lee `app.process` de sensor cache, match case-insensitive contra reglas
+- `pause() / resume()`: suspende/reanuda auto-switching (usado por editor dirty guard)
+- `start() / stop() / reload()`: ciclo de vida
+
+#### `daemon.py` — Integración
+- Import y creación de `ModeController` en `TurzxDaemon.__init__`
+- `start_render()`: configura sensor source lambda + `mode_controller.start()`
+- `stop_render()`: `mode_controller.stop()` antes de detener render thread
+
+#### `ui/main_window.py` — UI de modos
+- Import: `ModeConfig`, `ReactiveRule`, `RotativeConfig`, `ReactiveConfig`
+- Nuevo group box "Display Mode" en panel izquierdo:
+  - 3 radio buttons: Static / Rotative / Reactive
+  - Panel rotativo: lista checkable de layouts + spinbox intervalo (5-600s)
+  - Panel reactivo: lista de reglas proceso→layout + add/remove + fallback combo
+  - Botón "Apply Mode"
+- `_mark_dirty()` → `mode_controller.pause()`
+- `_save_layout()` / `closeEvent(No)` → `mode_controller.resume()`
+- `_on_mode_layout_switched()`: sincroniza combo + recarga canvas on auto-switch
+- `_load_mode_ui()`: carga configuración de modos desde config
+
+#### `tray.py` — Modo en tooltip + pausa
+- Tooltip muestra modo actual: "TURZX Monitor (Rotative)"
+- Nueva acción "Pause Mode" / "Resume Mode" visible en modos no-estáticos
+- `_update_mode_tooltip()` conectado a `layout_switched` signal
+
+### Archivos modificados
+- `config.py`: +4 dataclasses, ConfigManager extendido con mode persistence
+- `modes.py`: NUEVO — ModeController completo
+- `daemon.py`: +ModeController wiring
+- `ui/main_window.py`: +Display Mode UI, pause/resume integration
+- `tray.py`: +mode tooltip, +pause mode action
+
+### Reglas nuevas del bucle
+24. ModeController vive en main thread (QTimers) — render thread no necesita cambios porque ya polls `config.active_layout`.
+25. Siempre pausar mode controller cuando editor tiene cambios sin guardar — evita conflictos de layout switch.
 24. Sensores real-time (clock/date) deben excluirse del cache de overlay y dibujarse per-frame.

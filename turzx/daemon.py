@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QApplication
 
 from .config import ConfigManager
 from .device import TurzxDevice
+from .modes import ModeController
 from .renderer import Renderer
 from .sensors.base import SensorManager
 from .tray import TurzxTray
@@ -116,6 +117,7 @@ class TurzxDaemon(QObject):
         self._render_thread: RenderThread | None = None
         self._settings_window = None
 
+        self.mode_controller = ModeController(self.config)
         self.tray = TurzxTray(self)
 
     @property
@@ -173,8 +175,14 @@ class TurzxDaemon(QObject):
         self._render_thread = RenderThread(self)
         self._render_thread.error_occurred.connect(self._on_render_error)
         self._render_thread.start()
+        # Start mode controller with access to cached sensor values
+        self.mode_controller.set_sensor_source(
+            lambda: self._render_thread._cached_values if self._render_thread else {}
+        )
+        self.mode_controller.start()
 
     def stop_render(self) -> None:
+        self.mode_controller.stop()
         if self._render_thread:
             self._render_thread.stop()
             self._render_thread = None

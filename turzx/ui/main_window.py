@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
-from ..config import Layout, LayoutElement, Background
+from ..config import Layout, LayoutElement, Background, ModeConfig, ReactiveRule, RotativeConfig, ReactiveConfig
 from ..protocol import SCREEN_W, SCREEN_H
 from ..sensors.units import available_units
 from ..i18n import _
@@ -796,6 +796,69 @@ class ConfigWindow(QMainWindow):
         lgl.addLayout(save_row)
         ll.addWidget(lg)
 
+        # Display Mode
+        mg = QGroupBox(_("Display Mode"))
+        mgl = QVBoxLayout(mg)
+
+        mode_row = QHBoxLayout()
+        self._r_static = QRadioButton(_("Static"))
+        self._r_rotative = QRadioButton(_("Rotative"))
+        self._r_reactive = QRadioButton(_("Reactive"))
+        self._r_static.setChecked(True)
+        mode_row.addWidget(self._r_static)
+        mode_row.addWidget(self._r_rotative)
+        mode_row.addWidget(self._r_reactive)
+        mgl.addLayout(mode_row)
+
+        # Rotative config (hidden by default)
+        self._w_rotative = QWidget()
+        rot_l = QVBoxLayout(self._w_rotative)
+        rot_l.setContentsMargins(4, 4, 4, 4)
+        rot_l.addWidget(QLabel(_("Layouts to rotate:")))
+        self._list_rotate = QListWidget()
+        self._list_rotate.setMaximumHeight(120)
+        for name in self.daemon.config.list_layouts():
+            item = QListWidgetItem(name)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self._list_rotate.addItem(item)
+        rot_l.addWidget(self._list_rotate)
+        intv_row = QHBoxLayout()
+        intv_row.addWidget(QLabel(_("Interval (s):")))
+        self._sp_rotate_interval = QSpinBox()
+        self._sp_rotate_interval.setRange(5, 600)
+        self._sp_rotate_interval.setValue(30)
+        intv_row.addWidget(self._sp_rotate_interval)
+        rot_l.addLayout(intv_row)
+        self._w_rotative.setVisible(False)
+        mgl.addWidget(self._w_rotative)
+
+        # Reactive config (hidden by default)
+        self._w_reactive = QWidget()
+        react_l = QVBoxLayout(self._w_reactive)
+        react_l.setContentsMargins(4, 4, 4, 4)
+        react_l.addWidget(QLabel(_("Process → Layout rules:")))
+        self._list_rules = QListWidget()
+        self._list_rules.setMaximumHeight(120)
+        react_l.addWidget(self._list_rules)
+        rule_btn_row = QHBoxLayout()
+        self._btn_add_rule = QPushButton(_("+ Rule"))
+        self._btn_del_rule = QPushButton(_("- Rule"))
+        rule_btn_row.addWidget(self._btn_add_rule)
+        rule_btn_row.addWidget(self._btn_del_rule)
+        react_l.addLayout(rule_btn_row)
+        fb_row = QHBoxLayout()
+        fb_row.addWidget(QLabel(_("Fallback:")))
+        self._combo_fallback = QComboBox()
+        self._combo_fallback.addItems(self.daemon.config.list_layouts())
+        fb_row.addWidget(self._combo_fallback)
+        react_l.addLayout(fb_row)
+        self._w_reactive.setVisible(False)
+        mgl.addWidget(self._w_reactive)
+
+        self._btn_apply_mode = QPushButton(_("Apply Mode"))
+        mgl.addWidget(self._btn_apply_mode)
+        ll.addWidget(mg)
+
         # Sensor update interval
         rg = QGroupBox(_("Sensor Update"))
         rgl = QVBoxLayout(rg)
@@ -887,6 +950,17 @@ class ConfigWindow(QMainWindow):
         self._props.delete_requested.connect(self._scene.remove_selected)
         self._props.duplicate_requested.connect(self._scene.duplicate_selected)
 
+        # display mode
+        self._r_static.toggled.connect(self._on_mode_radio)
+        self._r_rotative.toggled.connect(self._on_mode_radio)
+        self._r_reactive.toggled.connect(self._on_mode_radio)
+        self._btn_apply_mode.clicked.connect(self._apply_mode)
+        self._btn_add_rule.clicked.connect(self._add_reactive_rule)
+        self._btn_del_rule.clicked.connect(self._del_reactive_rule)
+
+        # mode controller → UI sync
+        self.daemon.mode_controller.layout_switched.connect(self._on_mode_layout_switched)
+
     # ── Layout management ──
 
     def _load_layout(self):
@@ -906,6 +980,7 @@ class ConfigWindow(QMainWindow):
         self._combo_rotation.setCurrentIndex(rot_map.get(layout.rotation, 2))
         self._combo_rotation.blockSignals(False)
         self._adjust_preview_timer()
+        self._load_mode_ui()
         self._dirty = False
         self._update_title()
 
@@ -949,12 +1024,14 @@ class ConfigWindow(QMainWindow):
         self.daemon.config.save_layout(layout, self.daemon.config.active_name)
         self._dirty = False
         self._update_title()
+        self.daemon.mode_controller.resume()
 
     def _mark_dirty(self):
         """Mark layout as having unsaved changes."""
         if not self._dirty:
             self._dirty = True
             self._update_title()
+            self.daemon.mode_controller.pause()
 
     def _update_title(self):
         name = self.daemon.config.active_name
@@ -977,6 +1054,104 @@ class ConfigWindow(QMainWindow):
             self._combo_layout.blockSignals(False)
             self._dirty = False
             self._update_title()
+
+    # ── Display mode ──
+
+    def _on_mode_radio(self, checked: bool):
+        if not checked:
+            return
+        self._w_rotative.setVisible(self._r_rotative.isChecked())
+        self._w_reactive.setVisible(self._r_reactive.isChecked())
+
+    def _apply_mode(self):
+        """Build ModeConfig from UI and apply it."""
+        if self._r_static.isChecked():
+            mode = "static"
+        elif self._r_rotative.isChecked():
+            mode = "rotative"
+        else:
+            mode = "reactive"
+
+        # Rotative config
+        rot_layouts = []
+        for i in range(self._list_rotate.count()):
+            item = self._list_rotate.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                rot_layouts.append(item.text())
+        rot_interval = self._sp_rotate_interval.value()
+
+        # Reactive config
+        rules = []
+        for i in range(self._list_rules.count()):
+            text = self._list_rules.item(i).text()
+            if " → " in text:
+                proc, layout = text.split(" → ", 1)
+                rules.append(ReactiveRule(process=proc.strip(), layout=layout.strip()))
+        fallback = self._combo_fallback.currentText() or "default"
+
+        mc = ModeConfig(
+            mode=mode,
+            rotative=RotativeConfig(layouts=rot_layouts, interval=rot_interval),
+            reactive=ReactiveConfig(rules=rules, fallback_layout=fallback),
+        )
+        self.daemon.config.save_mode_config(mc)
+        self.daemon.mode_controller.reload()
+
+    def _add_reactive_rule(self):
+        """Add a new process → layout rule via input dialogs."""
+        process, ok = QInputDialog.getText(self, _("Add Rule"), _("Process name (e.g. Code.exe):"))
+        if not ok or not process:
+            return
+        layouts = self.daemon.config.list_layouts()
+        layout, ok = QInputDialog.getItem(self, _("Add Rule"), _("Layout:"), layouts, 0, False)
+        if not ok or not layout:
+            return
+        self._list_rules.addItem(QListWidgetItem(f"{process} → {layout}"))
+
+    def _del_reactive_rule(self):
+        """Remove selected rule."""
+        row = self._list_rules.currentRow()
+        if row >= 0:
+            self._list_rules.takeItem(row)
+
+    def _on_mode_layout_switched(self, name: str):
+        """Mode controller auto-switched the layout — sync UI."""
+        if self._dirty:
+            # Don't interrupt unsaved work — controller should be paused,
+            # but guard defensively
+            return
+        self._combo_layout.blockSignals(True)
+        idx = self._combo_layout.findText(name)
+        if idx >= 0:
+            self._combo_layout.setCurrentIndex(idx)
+        self._combo_layout.blockSignals(False)
+        self._load_layout()
+
+    def _load_mode_ui(self):
+        """Populate mode UI from config."""
+        mc = self.daemon.config.mode_config
+        {"static": self._r_static, "rotative": self._r_rotative, "reactive": self._r_reactive}.get(
+            mc.mode, self._r_static
+        ).setChecked(True)
+        self._w_rotative.setVisible(mc.mode == "rotative")
+        self._w_reactive.setVisible(mc.mode == "reactive")
+
+        # Rotative: check layouts
+        rot_set = set(mc.rotative.layouts)
+        for i in range(self._list_rotate.count()):
+            item = self._list_rotate.item(i)
+            item.setCheckState(
+                Qt.CheckState.Checked if item.text() in rot_set else Qt.CheckState.Unchecked
+            )
+        self._sp_rotate_interval.setValue(mc.rotative.interval)
+
+        # Reactive: build rule list
+        self._list_rules.clear()
+        for rule in mc.reactive.rules:
+            self._list_rules.addItem(QListWidgetItem(f"{rule.process} → {rule.layout}"))
+        idx = self._combo_fallback.findText(mc.reactive.fallback_layout)
+        if idx >= 0:
+            self._combo_fallback.setCurrentIndex(idx)
 
     # ── Add elements ──
 
@@ -1128,5 +1303,8 @@ class ConfigWindow(QMainWindow):
                 return
             if reply == QMessageBox.StandardButton.Yes:
                 self._save_layout()
+            else:
+                # User discarded changes — resume mode controller
+                self.daemon.mode_controller.resume()
         event.ignore()
         self.hide()

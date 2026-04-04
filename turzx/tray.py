@@ -55,6 +55,11 @@ class TurzxTray(QSystemTrayIcon):
         self._action_toggle.triggered.connect(self._toggle_render)
         menu.addAction(self._action_toggle)
 
+        self._action_pause_mode = QAction(_("Pause Mode"), menu)
+        self._action_pause_mode.triggered.connect(self._toggle_mode_pause)
+        self._action_pause_mode.setVisible(False)
+        menu.addAction(self._action_pause_mode)
+
         menu.addSeparator()
 
         self._action_settings = QAction(_("Settings"), menu)
@@ -69,6 +74,9 @@ class TurzxTray(QSystemTrayIcon):
 
         self.setContextMenu(menu)
 
+        # Listen for mode switches to update tooltip
+        self.daemon.mode_controller.layout_switched.connect(self._update_mode_tooltip)
+
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self._open_settings()
@@ -81,7 +89,26 @@ class TurzxTray(QSystemTrayIcon):
         else:
             self.daemon.start_render()
             self._action_toggle.setText(_("Pause"))
-            self.setToolTip(_("TURZX Monitor"))
+            self._update_mode_tooltip()
+
+    def _toggle_mode_pause(self) -> None:
+        mc = self.daemon.mode_controller
+        if mc._paused:
+            mc.resume()
+            self._action_pause_mode.setText(_("Pause Mode"))
+        else:
+            mc.pause()
+            self._action_pause_mode.setText(_("Resume Mode"))
+        self._update_mode_tooltip()
+
+    def _update_mode_tooltip(self, _name: str = "") -> None:
+        """Update tooltip to reflect current mode."""
+        mode = self.daemon.config.mode_config.mode
+        mode_labels = {"static": "Static", "rotative": "Rotative", "reactive": "Reactive"}
+        label = mode_labels.get(mode, mode.capitalize())
+        is_non_static = mode != "static"
+        self._action_pause_mode.setVisible(is_non_static)
+        self.setToolTip(f"TURZX Monitor ({label})")
 
     def _open_settings(self) -> None:
         self.daemon.show_settings()

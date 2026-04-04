@@ -130,7 +130,85 @@ class Layout:
         )
 
 
-# ── Config manager ──
+# ── Display mode models ──
+
+
+@dataclass
+class ReactiveRule:
+    """Maps a process name to a layout."""
+
+    process: str = ""  # e.g. "LeagueClient.exe"
+    layout: str = "default"
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ReactiveRule:
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class RotativeConfig:
+    """Settings for rotative mode: cycle through selected layouts."""
+
+    layouts: list[str] = field(default_factory=list)
+    interval: int = 30  # seconds between switches
+
+    def to_dict(self) -> dict:
+        return {"layouts": list(self.layouts), "interval": self.interval}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RotativeConfig:
+        return cls(
+            layouts=list(d.get("layouts", [])),
+            interval=d.get("interval", 30),
+        )
+
+
+@dataclass
+class ReactiveConfig:
+    """Settings for reactive mode: switch layout by foreground app."""
+
+    rules: list[ReactiveRule] = field(default_factory=list)
+    fallback_layout: str = "default"
+
+    def to_dict(self) -> dict:
+        return {
+            "rules": [r.to_dict() for r in self.rules],
+            "fallback_layout": self.fallback_layout,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ReactiveConfig:
+        return cls(
+            rules=[ReactiveRule.from_dict(r) for r in d.get("rules", [])],
+            fallback_layout=d.get("fallback_layout", "default"),
+        )
+
+
+@dataclass
+class ModeConfig:
+    """Display mode configuration: static, rotative, or reactive."""
+
+    mode: str = "static"  # "static" | "rotative" | "reactive"
+    rotative: RotativeConfig = field(default_factory=RotativeConfig)
+    reactive: ReactiveConfig = field(default_factory=ReactiveConfig)
+
+    def to_dict(self) -> dict:
+        return {
+            "mode": self.mode,
+            "rotative": self.rotative.to_dict(),
+            "reactive": self.reactive.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ModeConfig:
+        return cls(
+            mode=d.get("mode", "static"),
+            rotative=RotativeConfig.from_dict(d.get("rotative", {})),
+            reactive=ReactiveConfig.from_dict(d.get("reactive", {})),
+        )
 
 
 class ConfigManager:
@@ -142,7 +220,9 @@ class ConfigManager:
         self.layouts_dir.mkdir(parents=True, exist_ok=True)
         self._state_path = self.config_dir / "state.json"
 
-        self._active_name: str = self._read_active_name()
+        state = self._read_state()
+        self._active_name: str = state.get("active_layout", "default")
+        self._mode_config: ModeConfig = ModeConfig.from_dict(state.get("mode", {}))
         self._active: Layout | None = None
 
         # Ensure default layout exists and is up-to-date
@@ -163,19 +243,26 @@ class ConfigManager:
 
     # ── State persistence ──
 
-    def _read_active_name(self) -> str:
-        """Read last-active layout name from state file."""
+    def _read_state(self) -> dict:
+        """Read full state from state file."""
         try:
             with open(self._state_path, "r", encoding="utf-8") as f:
-                return json.load(f).get("active_layout", "default")
+                return json.load(f)
         except Exception:
-            return "default"
+            return {}
 
-    def _write_active_name(self) -> None:
-        """Persist active layout name to state file."""
+    def _write_state(self) -> None:
+        """Persist active layout and mode config atomically."""
         try:
             with open(self._state_path, "w", encoding="utf-8") as f:
-                json.dump({"active_layout": self._active_name}, f)
+                json.dump(
+                    {
+                        "active_layout": self._active_name,
+                        "mode": self._mode_config.to_dict(),
+                    },
+                    f,
+                    indent=2,
+                )
         except Exception:
             pass
 
@@ -196,8 +283,16 @@ class ConfigManager:
 
     def set_active(self, name: str) -> None:
         self._active_name = name
-        self._write_active_name()
+        self._write_state()
         self._load_active()
+
+    @property
+    def mode_config(self) -> ModeConfig:
+        return self._mode_config
+
+    def save_mode_config(self, config: ModeConfig) -> None:
+        self._mode_config = config
+        self._write_state()
 
     def list_layouts(self) -> list[str]:
         return sorted(p.stem for p in self.layouts_dir.glob("*.json"))
