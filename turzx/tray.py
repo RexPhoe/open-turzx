@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 from PySide6.QtGui import QAction, QIcon, QPixmap, QColor, QPainter, QFont
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
+from .i18n import _
+
 if TYPE_CHECKING:
     from .daemon import TurzxDaemon
 
@@ -40,28 +42,30 @@ class TurzxTray(QSystemTrayIcon):
         super().__init__()
         self.daemon = daemon
         self.setIcon(_make_icon())
-        self.setToolTip("TURZX Monitor")
+        self.setToolTip(_("TURZX Monitor"))
         self._build_menu()
         self.activated.connect(self._on_activated)
 
     def _build_menu(self) -> None:
         menu = QMenu()
+        # Keep references to prevent garbage collection (PySide6 quirk)
+        self._menu = menu
 
-        self._action_toggle = QAction("Pause")
+        self._action_toggle = QAction(_("Pause"), menu)
         self._action_toggle.triggered.connect(self._toggle_render)
         menu.addAction(self._action_toggle)
 
         menu.addSeparator()
 
-        action_settings = QAction("Settings")
-        action_settings.triggered.connect(self._open_settings)
-        menu.addAction(action_settings)
+        self._action_settings = QAction(_("Settings"), menu)
+        self._action_settings.triggered.connect(self._open_settings)
+        menu.addAction(self._action_settings)
 
         menu.addSeparator()
 
-        action_quit = QAction("Quit")
-        action_quit.triggered.connect(self._quit)
-        menu.addAction(action_quit)
+        self._action_quit = QAction(_("Quit"), menu)
+        self._action_quit.triggered.connect(self._quit)
+        menu.addAction(self._action_quit)
 
         self.setContextMenu(menu)
 
@@ -72,12 +76,12 @@ class TurzxTray(QSystemTrayIcon):
     def _toggle_render(self) -> None:
         if self.daemon.is_running:
             self.daemon.stop_render()
-            self._action_toggle.setText("Start")
-            self.setToolTip("TURZX Monitor (paused)")
+            self._action_toggle.setText(_("Start"))
+            self.setToolTip(_("TURZX Monitor (paused)"))
         else:
             self.daemon.start_render()
-            self._action_toggle.setText("Pause")
-            self.setToolTip("TURZX Monitor")
+            self._action_toggle.setText(_("Pause"))
+            self.setToolTip(_("TURZX Monitor"))
 
     def _open_settings(self) -> None:
         self.daemon.show_settings()

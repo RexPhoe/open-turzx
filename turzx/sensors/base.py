@@ -17,7 +17,7 @@ class SensorReading:
 
     sensor_id: str  # unique key, e.g. "cpu.percent"
     name: str  # human label, e.g. "CPU Usage"
-    value: float
+    value: float | int | str
     unit: str  # "%", "C", "GB", "MB/s", ...
     category: str  # "cpu", "memory", "gpu", "disk", "network", "system"
 
@@ -48,8 +48,19 @@ class SensorManager:
         from .network import NetworkSensors
         from .system import SystemSensors
         from .gpu import GpuSensors
+        from .foreground import ForegroundSensor
+        from .fps import FpsSensor
 
-        for cls in [CpuSensors, MemorySensors, DiskSensors, NetworkSensors, SystemSensors, GpuSensors]:
+        for cls in [
+            CpuSensors,
+            MemorySensors,
+            DiskSensors,
+            NetworkSensors,
+            SystemSensors,
+            GpuSensors,
+            ForegroundSensor,
+            FpsSensor,
+        ]:
             try:
                 self.register(cls())
             except Exception:

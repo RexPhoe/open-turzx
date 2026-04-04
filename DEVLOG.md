@@ -13,15 +13,15 @@
 | Protocolo DES-CBC | ✅ Validado | key=IV=`b"slv3tuzx"`, CBC, PKCS7 |
 | Comunicacion USB | ✅ Funciona | EP 0x01 OUT / EP 0x81 IN (Bulk), status 200 |
 | Renderizado imagen | ✅ **FUNCIONA** | CMD 101 (SEND_JPEG), no CMD 102 |
-| Rotacion pantalla | ✅ Corregido | Rotate 180 en software (panel montado al reves) |
-| App daemon + tray | 🔧 Phase 1 | Estructura creada, PySide6, sensores psutil |
-| Visual editor | ⏳ Phase 2 | Drag-and-drop de elementos en canvas 480x480 |
+| Rotacion pantalla | ✅ Configurable | Layout.rotation (0/90/180/270), default 180 |
+| App daemon + tray | ✅ Phase 1 | PySide6 tray, sensores psutil, render loop |
+| Visual editor | ✅ Phase 2 | Drag-and-drop, props panel, fondos, rotacion config |
 | Dynamic profiles | ⏳ Phase 3 | Cambio automatico segun programa activo |
 | BOB (avatar virtual) | ⏳ Phase 4 | Personaje animado con IA — experimental |
 | Compatibilidad Linux | 🔧 En progreso | libusb + psutil + PySide6 = cross-platform |
 | Device se bloquea | ⚠️ Confirmado | Secuencias largas (>5-6 cmds) bloquean firmware |
 
-**FASE ACTUAL: Phase 1 — Daemon + Static Monitor**
+**FASE ACTUAL: Phase 3 — Dynamic Profiles (pendiente)**
 
 **Protocolo resuelto (2026-04-02):**
 - CMD 101 (`SEND_JPEG`) muestra imagen; CMD 102 es aceptado pero NO renderiza
@@ -31,7 +31,7 @@
 
 ## PLAN DE FASES
 
-### Phase 1 — Daemon + Static Monitor (ACTUAL)
+### Phase 1 — Daemon + Static Monitor (COMPLETADO)
 Daemon con tray icon que muestra sensores del sistema en la pantalla.
 - [x] Driver USB validado (protocol.py, device.py, images.py)
 - [x] Estructura del proyecto limpia
@@ -41,20 +41,21 @@ Daemon con tray icon que muestra sensores del sistema en la pantalla.
 - [x] Daemon con QThread render loop
 - [x] Tray icon con menu (Start/Pause, Settings, Quit)
 - [x] Ventana Settings con preview live y lista de sensores
-- [ ] Probar ejecucion completa (daemon + device real)
-- [ ] Ajustar layout default con datos reales
-- [ ] Publicar en GitHub
 
-### Phase 2 — Visual Editor
+### Phase 2 — Visual Editor (COMPLETADO)
 Editor drag-and-drop para disenar layouts.
-- [ ] QGraphicsScene canvas 480x480
-- [ ] Arrastrar elementos (texto, sensor, imagen)
-- [ ] Mover X/Y libremente
-- [ ] Control Z-order (delante/detras)
-- [ ] Editar propiedades (font, color, formato)
-- [ ] Selector de fondo (color solido, imagen, video en bucle)
-- [ ] Guardar/cargar configuraciones
-- [ ] Frecuencia de actualizacion por layout
+- [x] QGraphicsScene canvas 480x480
+- [x] Arrastrar elementos (texto, sensor, imagen)
+- [x] Mover X/Y libremente
+- [x] Control Z-order (delante/detras)
+- [x] Editar propiedades (font, color, formato)
+- [x] Selector de fondo (color solido, imagen, video en bucle)
+- [x] Guardar/cargar configuraciones
+- [x] Frecuencia de actualizacion por layout
+- [x] Rotacion configurable (0/90/180/270) — editor siempre sin rotar
+- [x] Preview live sin rotacion (usa render_image directamente)
+- [x] CPU freq fallback via winreg en Windows
+- [x] Sensor cpu.freq_mhz adicional
 
 ### Phase 3 — Dynamic Profiles
 La pantalla cambia automaticamente segun el programa activo.
@@ -472,3 +473,589 @@ TURZX/
 El proyecto acumulo 11 scripts de test, una carpeta legacy de >100 archivos, y multiples
 venvs. Todo ese ruido dificultaba entender el estado real. Limpiar ANTES de empezar
 la nueva fase fue la decision correcta: ahora cada archivo tiene un proposito claro.
+
+---
+
+## Sesion 2026-04-03 — Phase 2 Completo: Editor Visual + Fondos + Rotacion
+
+### Contexto
+- Phase 1 funcional (daemon + tray + sensores + renderer)
+- Preview mostraba contenido rotado 180° (usaba JPEG del device, no imagen sin rotar)
+- No habia editor visual — solo layout JSON manual
+- CPU frequency no aparecia en algunos sistemas Windows
+
+### Implementaciones realizadas
+
+#### 1. Editor drag-and-drop (`ui/editor.py`)
+- `ElementItem(QGraphicsItem)`: elementos arrastrables con soporte para text/sensor/image
+- Posicionamiento anchor-aware (lt, mt, rt, lm, mm, rm, lb, mb, rb)
+- `itemChange()` actualiza x,y del LayoutElement en tiempo real al arrastrar
+- `EditorScene(QGraphicsScene)`: canvas 480x480, signals element_selected/layout_modified
+- `LayoutCanvas(QGraphicsView)`: fit-to-view, re-emite element_selected en mouseRelease
+
+#### 2. Panel de propiedades (`ui/main_window.py` — PropertiesPanel)
+- Campos tipo-especificos: text muestra editor de texto, sensor muestra combo de sensor_id + label + format, image muestra file browser
+- Controles de estilo: font_size, color (ColorButton con QColorDialog), anchor
+- Posicion: spinboxes X/Y/Z
+- Acciones: Delete, Duplicate
+- Background: radio Solid/Image/Video + color picker + file path browser
+- Flag `_updating` para evitar loops de signals
+
+#### 3. ConfigWindow — ventana principal 3 paneles
+- Left: Layout selector + Save/Save As + FPS slider + **rotation combo** + add element buttons + sensor list (double-click to add)
+- Center: LayoutCanvas + PreviewWidget (live preview cada 2s)
+- Right: PropertiesPanel
+- QSplitter ajustable
+
+#### 4. Preview corregido (`ui/preview.py`)
+- `update_from_pil()`: recibe PIL Image sin rotacion — usado por live preview timer
+- Editor y preview siempre muestran contenido sin rotar (orientacion correcta para edicion)
+
+#### 5. Fondos imagen y video
+- Renderer soporta backgrounds: solid (color), image (Pillow), video (cv2 frame extraction)
+- Video: cv2.VideoCapture con loop automatico, `cleanup()` para liberar recursos
+- Dependencia cv2 opcional: `pip install turzx[video]`
+
+#### 6. Rotacion configurable
+- `Layout.rotation: int` (0, 90, 180, 270) — default 180° (panel fisico montado invertido)
+- `renderer.render()` pasa `layout.rotation` a `to_jpeg(rotate=...)`
+- `render_image()` siempre devuelve imagen sin rotar (para editor/preview)
+- UI: combo "Device Rotation" en left toolbox con opciones 0°/90°/180°/270°
+- Se persiste en JSON layout y se carga al abrir editor
+
+#### 7. CPU frequency fix (`sensors/cpu.py`)
+- `_cpu_freq_mhz()`: intenta `psutil.cpu_freq()` primero
+- Fallback Windows: lee `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\~MHz` via `winreg`
+- Nuevo sensor `cpu.freq_mhz` ademas del existente `cpu.freq_ghz`
+
+### Archivos modificados
+- `config.py`: +Layout.rotation, +LayoutElement.w/.h, +to_dict/from_dict rotation
+- `renderer.py`: +render_image(), render() usa layout.rotation, +video background, +cleanup()
+- `ui/editor.py`: implementacion completa (era placeholder)
+- `ui/main_window.py`: implementacion completa con 3-panel layout + rotation combo
+- `ui/preview.py`: implementacion completa con update_from_pil
+- `sensors/cpu.py`: +_cpu_freq_mhz() con winreg fallback, +cpu.freq_mhz sensor
+- `daemon.py`: +renderer.cleanup() en shutdown()
+- `pyproject.toml`: +optional video dependency
+
+### Lecciones aprendidas
+1. **Separar render_image() de render()**: La imagen sin rotar es necesaria para editor/preview, la rotada solo para el device. Esta separacion elimina el bug del preview rotado.
+2. **psutil.cpu_freq() no es fiable en Windows**: Puede retornar None. El registro de Windows siempre tiene ~MHz disponible.
+3. **Flag _updating en panels bidireccionales**: Cuando propiedades y scene se actualizan mutuamente, un flag booleano previene recursion infinita de signals.
+
+---
+
+## Sesion 2026-04-04 — CPU Freq Real-time + Foreground App + Preview Circular
+
+### Contexto
+- Phase 2 funcional, pero CPU freq mostraba solo valor base (no turbo)
+- Necesidad de detectar aplicacion en primer plano (preparacion Phase 3)
+- Preview cuadrado no representaba la pantalla circular real
+- Tray ya tenia opcion Quit (verificado en `tray.py:62-64`)
+
+### Implementaciones realizadas
+
+#### 1. CPU frequency real-time con turbo (`sensors/cpu.py`)
+- `_cpu_freq_mhz_realtime()` reemplaza `_cpu_freq_mhz()`
+- Prioridad 1: `psutil.cpu_freq().current` si devuelve valor dinamico (current != min)
+- Prioridad 2 (Windows): WMI `Win32_PerfFormattedData_Counters_ProcessorInformation` que da `PercentofMaximumFrequency` × base_mhz = freq real con turbo
+- Prioridad 3: registry `~MHz` como fallback estatico
+- Nuevo sensor `cpu.base_mhz` — siempre muestra reloj base para referencia
+- `SensorReading.value` ampliado a `float | int | str` para soportar valores textuales
+
+#### 2. Foreground application sensor (`sensors/foreground.py`) — NUEVO
+- `app.window_title`: titulo de la ventana activa (truncado a 40 chars)
+- `app.process`: nombre del proceso (ej: "firefox.exe", "Code.exe")
+- Windows: `ctypes` puro (GetForegroundWindow, GetWindowTextW, QueryFullProcessImageNameW)
+- Linux: `xdotool getactivewindow getwindowname`
+- Registrado en `SensorManager.register_defaults()`
+- Preparacion para Phase 3 (cambio automatico de layout por aplicacion)
+
+#### 3. Preview circular (`ui/preview.py`)
+- Ahora es QWidget con paintEvent custom (era QLabel con setPixmap)
+- QPainterPath circular como clip mask
+- Centra el pixmap escalado dentro del circulo
+- Borde ring sutil (60,60,70) para delimitar la pantalla
+- Fondo oscuro detras del circulo (#111)
+- Simula forma real de la pantalla 2.8" circular
+
+#### 4. Verificacion tray Quit
+- La opcion "Quit" ya existia en `tray.py` linea 62-64
+- Llama a `daemon.shutdown()` → `QApplication.quit()` — funciona correctamente
+
+### Archivos modificados
+- `sensors/cpu.py`: _cpu_freq_mhz_realtime() con WMI turbo, +cpu.base_mhz
+- `sensors/foreground.py`: NUEVO — deteccion ventana/proceso activo
+- `sensors/base.py`: +foreground en register_defaults, value type widened
+- `ui/preview.py`: reescrito como QWidget con circular clip mask
+
+### Lecciones aprendidas
+1. **winreg ~MHz es estatico**: Solo da base clock, no refleja turbo/boost. WMI PercentofMaximumFrequency es la forma correcta de obtener freq real en Windows.
+2. **ctypes vs pywin32**: ctypes es stdlib, no requiere dependencia extra. Para GetForegroundWindow + GetWindowText + OpenProcess + QueryFullProcessImageName es suficiente.
+3. **QWidget.paintEvent > QLabel.setPixmap** para mascaras: QPainterPath.addEllipse + setClipPath permite cualquier forma de recorte.
+
+---
+
+## Sesion 2026-04-04 (tarde) — CPU Freq Turbo Real + Video Background Fix
+
+### Contexto
+- CPU freq mostraba siempre 3701 MHz (base) en lugar de frecuencia turbo real (~5000 MHz)
+- Video backgrounds no funcionaban: cv2 no instalado + editor usaba QPixmap(path) para video
+- CallNtPowerInformation (ntdll) tambien retorna solo base clock, no turbo
+- PercentProcessorPerformance via PDH refleja >100% cuando hay turbo boost
+
+### Implementaciones realizadas
+
+#### 1. CPU frequency real-time via PDH (`sensors/cpu.py`)
+- **Problema raiz**: `CallNtPowerInformation`, `winreg ~MHz`, y `psutil.cpu_freq()` retornan base clock (3701 MHz), no turbo
+- **Solucion**: `_PdhFreqHelper` usa Windows Performance Data Helper (pdh.dll)
+  - Lee `\Processor Information(_Total)\% Processor Performance`
+  - Este counter da % relativo a base (ej: 133% = turbo activo)
+  - Multiplica por base_mhz del registry = frecuencia real
+  - Resultado verificado: 4985-5071 MHz en Ryzen 9 7900 (boost spec: 5.4 GHz)
+  - Latency: ~0.3ms por lectura, zero deps externas
+  - Query PDH se abre una vez en __init__ y se reutiliza
+- Eliminada dependencia de `wmi` package (innecesaria)
+- Sensores: `cpu.freq_ghz`, `cpu.freq_mhz` (real-time), `cpu.base_mhz` (static)
+
+#### 2. Video background fix (`ui/editor.py` + cv2 setup)
+- opencv-python instalado como dependencia
+- Editor: `_video_thumbnail()` — extrae primer frame del video como QPixmap via cv2
+  - `_apply_background()` ahora tiene path separado para `type=="video"` en lugar de agrupar con image
+  - QPixmap no puede cargar .mp4/.avi — necesita cv2 para extraer frame
+- Renderer: ya funcionaba correctamente con cv2 (solo faltaba el package)
+
+### Enfoques probados para CPU freq (Windows)
+
+| Metodo | Resultado | Turbo? |
+|--------|-----------|--------|
+| `psutil.cpu_freq()` | None o base clock | No |
+| `winreg ~MHz` | 3701 (base) | No |
+| `CallNtPowerInformation(11)` | 3701 (base) | No |
+| `Win32_Processor.CurrentClockSpeed` | 3701 (base) | No |
+| `Win32_PerfFormatted..PercentofMaximumFrequency` | 100% (no turbo??) | No |
+| **PDH `% Processor Performance`** | **133% → 4922 MHz** | **Si** |
+| PowerShell Get-CimInstance | 133% pero 900ms latencia | Si pero lento |
+
+### Archivos modificados
+- `sensors/cpu.py`: reescrito con _PdhFreqHelper (PDH via ctypes), eliminado WMI
+- `ui/editor.py`: +_video_thumbnail(), _apply_background() para video separado de image, +QImage import
+
+### Lecciones aprendidas
+1. **PDH es la unica fuente real de turbo freq en Windows**: Todos los demas metodos (winreg, psutil, WMI Win32_Processor, CallNtPowerInformation) retornan base clock. PDH "% Processor Performance" incluye boost/turbo como >100%.
+2. **QPixmap no carga video**: Qt no tiene decodificador de video integrado en QPixmap. Para thumbnails de video en el editor hay que usar cv2.VideoCapture → primer frame → QImage.
+3. **PDH query reutilizable**: Abrir PdhOpenQuery + PdhAddEnglishCounter una vez en __init__, luego PdhCollectQueryData + PdhGetFormattedCounterValue en cada read() = 0.3ms.
+
+---
+
+## Sesion 2026-04-04 (noche) — Bugfixes: Tray GC, Video Auto-detect, Layout Regen
+
+### Contexto
+- Video backgrounds no se reproducian
+- Quit no aparecia en el menu contextual del tray
+- CPU freq no se veia en la app (aunque funcionaba en tests)
+
+### Diagnostico y root causes
+
+#### 1. Tray Quit/Settings desaparecen (GC)
+**Root cause:** `action_settings` y `action_quit` eran variables locales en `_build_menu()`.
+PySide6 no siempre mantiene una strong reference desde QMenu a QAction.
+Cuando Python hace garbage collection, las acciones desaparecen del menu.
+**Fix:** Almacenar como `self._action_settings`, `self._action_quit`, `self._menu`.
+Tambien pasamos `menu` como parent de cada QAction.
+
+#### 2. Video backgrounds no funcionaban
+**Root cause (multiple):**
+- cv2 ya instalado y funcional (verificado en sesion anterior)
+- El renderer lee frames correctamente (verificado: pixel test con video azul)
+- **Bug real**: El file picker `_pick_bg()` no auto-cambiaba la radio a "Video" al seleccionar .mp4
+  - Usuario selecciona video → radio sigue en "Solid" → `_on_bg()` envia type="solid" con path
+  - El renderer recibe type="solid" → ignora path → muestra color solido
+- **Bug secundario**: cv2 puede fallar con backslashes en Windows path en algunos builds
+**Fix:** `_pick_bg()` ahora detecta extension y auto-selecciona radio Image/Video.
+Renderer normaliza path con `replace("\\", "/")` antes de pasarlo a cv2.
+
+#### 3. CPU frequency "no aparece"
+**Root cause:** El saved `default.json` en `%APPDATA%` no tenia el campo `rotation` (layout viejo).
+Pero la frecuencia SI aparecia — verificado end-to-end: 4831-4866 MHz actualizandose.
+PDH helper funciona correctamente: init OK, read_mhz devuelve valores turbo.
+**Accion:** Regenerado `default.json` con todos los campos actuales (rotation, w, h).
+Posible causa: si el usuario tenia un layout custom sin `cpu.freq_ghz`, no se mostraria.
+
+### Archivos modificados
+- `tray.py`: QAction almacenados como self._ (prevent GC), +parent en QAction constructor
+- `ui/main_window.py`: `_pick_bg()` auto-detect extension → switch radio Image/Video
+- `renderer.py`: `_read_video_frame()` normaliza path backslashes para cv2
+- `%APPDATA%/turzx/layouts/default.json`: regenerado con rotation=180
+
+### Lecciones aprendidas
+1. **PySide6 GC de QAction**: Las QAction creadas como variables locales pueden ser garbage-collected si Python pierde la referencia, incluso si QMenu las tiene como hijos. SIEMPRE almacenar como `self._action_*`.
+2. **File picker debe auto-detectar tipo**: Cuando el usuario selecciona un .mp4 y el radio esta en "Solid", el fondo queda como color solido. Auto-switch el radio basado en extension.
+3. **Verificar end-to-end antes de asumir bug**: La frecuencia CPU funcionaba perfectamente en tests. El bug era probablemente en el layout del usuario, no en el codigo del sensor.
+
+---
+
+## BUCLE DE MEJORA CONSTANTE — Revision
+
+### Patron de bugs recurrentes
+| Tipo | Ejemplo | Prevencion |
+|------|---------|------------|
+| GC en Qt | QAction, QMenu | Siempre `self._` para widgets que deben persistir |
+| Path Windows | Backslashes con cv2 | Normalizar con `.replace("\\", "/")` |
+| UI state desync | Radio no cambia con file picker | Auto-switch segun contexto |
+| Layout JSON viejo | Campos nuevos no existen | `from_dict` con defaults, regenerar si necesario |
+| Dependencia no instalada | cv2 no estaba | Verificar con import en startup |
+| API que retorna static | winreg, CallNtPowerInformation | Documentar cual API da datos reales |
+| Memoria numpy→QImage | QImage envuelve buffer numpy | `bytes(frame.data)` ANTES de QImage, luego `.copy()` |
+| Race condition timers | Timer toca items destruidos | Parar timer ANTES de `scene.clear()` |
+| Init ordering | Atributo no existe cuando se lee | Crear dependencias antes de llamar metodos que las usan |
+
+### Reglas derivadas del bucle
+1. Todo QAction/QWidget creado en un metodo debe almacenarse como `self._*`
+2. File paths siempre normalizados antes de pasar a libs externas (cv2, etc)
+3. File dialogs deben auto-configurar el estado de la UI segun el archivo seleccionado
+4. Nuevos campos en dataclasses siempre con default → backward-compatible con JSON viejos
+5. Verificar sensor pipeline end-to-end antes de buscar bugs en componentes individuales
+6. PDH (pdh.dll) es la UNICA fuente real de CPU turbo freq en Windows
+7. Layout JSON versionado: `_DEFAULT_LAYOUT_VERSION` en config.py; se regenera si version < actual
+8. pynvml importar localmente dentro de read(); FutureWarning por deprecacion del paquete `pynvml`
+9. NUNCA pasar numpy `.data` directo a QImage — **siempre** `bytes(frame.data)` primero para crear copia segura
+10. Parar timers y cerrar recursos ANTES de destruir items de escena (`.clear()`)
+11. En `__init__`, crear atributos/timers que otros metodos usan ANTES de llamar esos metodos
+12. Desacoplar FPS de pantalla (24/30/60) de intervalo de sensores (0.2-5.0s) — cachear lecturas y reutilizar entre polls
+
+---
+
+## Sesion 2026-04-04
+
+### Cambios realizados
+
+#### 1. CPU current clock speed — fix definitivo para GUI
+**Problema:** El sensor PDH funcionaba en CLI (5270+ MHz) pero no aparecia en la GUI.
+**Causa raiz:** El `default.json` guardado era version antigua sin el elemento `cpu.freq_ghz`. ConfigManager solo regenera si el archivo NO existe, asi que el layout viejo persistia.
+**Solucion:** Versionado de layouts — `_DEFAULT_LAYOUT_VERSION = 2` en config.py. ConfigManager ahora lee `_version` del JSON y regenera si es menor que la version actual. `Layout.to_dict()` incluye `_version`.
+
+#### 2. GPU metrics — expansion completa (NVIDIA RTX 5080)
+**Antes:** Solo 3 sensores basicos (percent, mem_gb, temp).
+**Ahora:** 10 sensores GPU completos:
+- `gpu.name` — NVIDIA GeForce RTX 5080
+- `gpu.percent` — uso GPU %
+- `gpu.mem_gb` / `gpu.mem_total_gb` / `gpu.mem_percent` — VRAM
+- `gpu.temp` — temperatura
+- `gpu.clock_mhz` / `gpu.mem_clock_mhz` — relojes core/memoria
+- `gpu.fan` — velocidad ventilador %
+- `gpu.power_w` — consumo en W
+
+Cada llamada individual envuelta en try/except para que un sensor que falle no bloquee los demas.
+`pynvml` instalado (`pip install pynvml`), ya estaba en optional deps `[gpu]`.
+
+#### 3. Video background auto-play en bucle — REESCRITURA TOTAL
+**Problema:** Al seleccionar un video como fondo, solo se mostraba un color solido.
+**Diagnostico exhaustivo:**
+- cv2 abria los videos ✓, leia frames ✓, codec FFMPEG disponible ✓
+- El renderer (PIL) producia imagenes correctas con contenido visual ✓
+- Test headless con QGraphicsScene: video se renderizaba correctamente ✓
+- Conclusion: NO era problema de codec ni de path, sino de **conversion de memoria numpy→QImage**
+
+**Causa raiz REAL:**
+1. `QImage(frame.data, ...)` envuelve la memoria del array numpy SIN copiarla
+2. Cuando el frame numpy sale de scope o se reasigna, QImage apunta a memoria liberada
+3. Aunque se hacia `.copy()` despues, el timing era fragil — a veces la copia ocurria despues de que numpy liberara la memoria
+4. Ademas `load_layout()` llamaba `self.clear()` ANTES de parar el video timer, causando race conditions
+
+**Solucion — reescritura completa del modulo de video:**
+- **`_cv2_frame_to_pixmap()`**: Conversion segura BGR→QPixmap — primero `bytes(frame.data)` crea copia del buffer numpy, luego QImage sobre esos bytes, luego `.copy()` para QImage independiente
+- **`_VideoBgPlayer`**: Reemplaza `_VideoFrameReader` — clase mas robusta con `is_open` property, logging a stderr, normaliza paths, lee FPS del video para calcular intervalo del timer
+- **`EditorScene.load_layout()`**: Ahora detiene video ANTES de `self.clear()` — evita race condition
+- **`_apply_background()`**: Logging `[TURZX video]` a stderr para diagnostico
+- **`_tick_video()`**: Verifica `is_open` y detiene timer si player cerrado
+- **`ConfigWindow._adjust_preview_timer()`**: 100ms para video bg, 2000ms para static
+
+#### 4. Default layout actualizado (version 2)
+- Incluye GPU clock, VRAM, power
+- Incluye foreground app process
+- Mejor distribucion vertical para pantalla circular
+- Se regenera automaticamente al detectar version < 2
+
+### Estado de sensores verificado (26 total)
+```
+cpu.percent: 9.1%    cpu.freq_ghz: 5.27 GHz   cpu.base_mhz: 3701 MHz
+cpu.cores: 24        mem.percent: 14.3%         mem.used_gb: 9.0 GB
+disk.percent: 33.2%  disk.used_gb: 618.0 GB
+net.down_mbps: 0.0   net.up_mbps: 0.0 MB/s
+gpu.name: RTX 5080   gpu.percent: 0%            gpu.temp: 34C
+gpu.clock_mhz: 2595  gpu.mem_clock_mhz: 15479   gpu.fan: 30%
+gpu.power_w: 56.1 W  gpu.mem_gb: 1.2/15.9 GB
+app.process: Code.exe  app.window_title: ...
+sys.uptime_h: 0h 58m
+```
+
+### Lecciones aprendidas
+1. **Layouts viejos guardan estado viejo**: Si el default.json ya existe, el ConfigManager no lo regenera. Solucion: versionado de layouts y regeneracion automatica.
+2. **Video en canvas Qt necesita timer propio**: QGraphicsPixmapItem no se anima solo — necesita un timer que lea frames y actualice el pixmap periodicamente.
+3. **Cada sensor GPU debe tener su propio try/except**: Algunas APIs de NVML fallan en ciertos drivers/GPUs. Envolver individualmente evita que un sensor roto bloquee todos.
+4. **QImage NO copia memoria numpy**: `QImage(frame.data, ...)` solo envuelve el buffer — si numpy lo libera, QImage apunta a basura. SIEMPRE hacer `bytes(frame.data)` antes.
+5. **Diagnosticar capa por capa**: El video no se veia pero el problema no era codec ni cv2 ni renderer — era la conversion QImage. Testar cada capa aislada (cv2→PIL, cv2→QPixmap, QPixmap→Scene) identifico el bug.
+6. **Race condition con timers Qt y `scene.clear()`**: Si un timer actualiza un QGraphicsItem que fue destruido por `clear()`, crashea. Siempre parar timers antes de clear.
+7. **Orden de init importa**: `_load_layout()` → `_adjust_preview_timer()` necesita `self._timer`. Crear el timer ANTES de llamar a `_load_layout()`.
+
+#### 5. Dual-cadence architecture — sensor rate vs screen FPS
+**Problema:** Antes, un solo valor de "refresh rate" controlaba tanto los FPS de pantalla como la frecuencia de lectura de sensores. Para video backgrounds fluidos se necesitan 24-60 FPS de renderizado, pero leer todos los sensores a 60 Hz es innecesario y costoso.
+
+**Solucion — dos valores independientes:**
+- **`screen_fps`** (24/30/60): frecuencia de renderizado de frames y envio al device. Controla fluidez del video background.
+- **`refresh_rate`** (0.2–5.0 s): intervalo de actualizacion de datos de sensores. Los valores se cachean y se reutilizan entre lecturas.
+
+**Cambios en config.py:**
+- Campo `Layout.screen_fps: int = 24` (nuevo)
+- `_DEFAULT_LAYOUT_VERSION` → 3
+- `to_dict()` y `from_dict()` incluyen `screen_fps`
+
+**Cambios en daemon.py — `RenderThread` reescrito:**
+- Loop principal corre a `screen_fps` (ms = 1000/fps)
+- `_cached_values` almacena ultima lectura de sensores
+- `_last_sensor_read` timestamp para comparar contra `refresh_rate`
+- Solo llama `sensors.read_all()` cuando ha pasado el intervalo de sensores
+- Prime cache al inicio del thread para evitar primer frame sin datos
+
+**Cambios en main_window.py — UI dual:**
+- "Screen FPS" combo (24/30/60) reemplaza el control unico de FPS
+- "Sensor Update" slider (0.2–5.0 s) controla `layout.refresh_rate`
+- `_on_fps()` handler: actualiza `layout.screen_fps` + ajusta preview timer
+- `_on_rate()` handler: actualiza `layout.refresh_rate` con label en "s"
+- `_adjust_preview_timer()`: para video backgrounds, usa `screen_fps` del layout para el intervalo del preview timer
+- `_load_layout()` carga ambos valores con blockSignals
+
+**Resultado:** Video a 30 FPS con sensores actualizando cada 1s = fluidez visual sin overhead.
+
+---
+
+## Sesion 2026-04-04 (continuacion) — Video Loop Fix + Save System + Two-Layer Architecture + Unit Conversion + i18n
+
+### Contexto
+- Video backgrounds con ciertos codecs (H.265, VP9) fallaban al hacer loop
+- Sistema de guardado no persistia correctamente entre reinicios
+- Video sincronizado con sensor update en vez de correr independiente
+- FPS configurable era innecesario — simplificado a 60 fijo
+- Properties panel necesitaba font selection, gradient fill, stroke
+- Necesidad de conversion de unidades por sensor y preparacion i18n
+
+### Implementaciones realizadas
+
+#### 1. Video loop fix — reopen on seek failure
+**Problema:** `cv2.CAP_PROP_POS_FRAMES = 0` falla en ciertos codecs (H.265, VP9, ciertos MP4).
+Despues de varios loops, `read()` devuelve False y el video se congela.
+
+**Solucion:** Tres intentos progresivos:
+1. Seek a frame 0 (`set(CAP_PROP_POS_FRAMES, 0)`) + read
+2. Si falla: `release()` + reopen `VideoCapture(path)` + read
+3. Si sigue fallando: devolver ultimo frame valido cacheado
+
+Aplicado en:
+- `renderer.py:_read_video_frame()` (device pipeline)
+- `ui/editor.py:_VideoBgPlayer.next_frame_pixmap()` (editor preview)
+
+#### 2. Save system overhaul — 8 bugs corregidos
+**Problemas encontrados (analisis exhaustivo):**
+1. `_active_name` hardcoded a "default" sin persistencia
+2. Combo box no sincronizado con layout activo al abrir
+3. `layout_modified` signal sin conectar a auto-save
+4. `_auto_save` usaba texto del combo (podia ser nombre corrupto)
+5. `_save_layout_as` no actualizaba layout activo
+6. Ediciones de elemento no triggerean save
+7. Drag positions no triggerean save
+8. No habia `state.json` para recordar layout activo entre sesiones
+
+**Solucion — single source of truth:**
+- `state.json` en config_dir persiste `active_layout` name
+- `config.active_name` property como unica fuente
+- `set_active()` persiste a `state.json`
+- `layout_modified` signal → `_auto_save()`
+- `_auto_save()` usa `config.active_name`
+- `mouseReleaseEvent` en LayoutCanvas emite `layout_modified`
+- `_on_element_changed` refresh visual + auto-save
+
+#### 3. Two-layer render architecture
+**Problema:** Video playback ligado a frecuencia de lectura de sensores.
+
+**Solucion — overlay + background separados:**
+- **Overlay (RGBA):** texto, sensores, imagenes. Se reconstruye solo en sensor_rate (1s).
+- **Background:** frame de video / imagen / color. Avanza a 60 FPS.
+- `render_frame()` = next bg frame + paste cached overlay → JPEG. ~5ms/frame.
+- `update_overlay()` = rebuild completo de elementos. ~50ms pero infrecuente.
+- Video cacheado a 24fps (VIDEO_FPS_CAP) — entre advances devuelve frame cacheado.
+
+#### 4. FPS simplificado a 60 fijo
+- Eliminado combo de FPS (24/30/60)
+- `screen_fps` hardcoded a 60 en `Layout.from_dict()` (ignora valor guardado)
+- `_DEFAULT_LAYOUT_VERSION` → 4
+
+#### 5. Text styling: gradient + stroke + font family
+- `LayoutElement`: +font_family, +gradient/gradient_color/gradient_angle, +stroke_width/stroke_color
+- Renderer: gradient via mask—textbbox → gradient image → text mask → composite
+- Renderer: stroke via PIL `stroke_width/stroke_fill` params
+- Font family: intentar family+.ttf/.otf, fallback a lista de candidatos
+- PropertiesPanel: font combo (editable), gradient checkbox + end color + angle, stroke checkbox + width + color
+
+#### 6. Sensor unit conversion system
+**Concepto:** Cada sensor tiene una unidad nativa, pero el usuario puede elegir la unidad de visualizacion.
+- `display_unit` field en `LayoutElement`
+- Mapa de conversiones definido en `sensors/units.py`
+- Se aplica la conversion en el renderer al formatear sensor text
+- UI: combo de unidades disponibles por tipo de sensor en PropertiesPanel
+
+#### 7. i18n preparation
+- `turzx/i18n.py`: funcion `_()` que devuelve el string original (noop initial)
+- Todas las etiquetas UI centralizadas — preparado para futuro .po/.json
+- Las funciones de traduccion se importan por archivo, no decoran nada
+
+### Auditoria de compatibilidad Linux
+
+**Estado: Sustancialmente compatible.** Todo el codigo Windows-especifico tiene guards `sys.platform`.
+
+| Componente | Estado Linux | Accion necesaria |
+|---|---|---|
+| USB device (device.py) | ✅ Funciona | libusb sistema + udev rule |
+| Config dir (config.py) | ✅ XDG compliant | Ninguna |
+| CPU sensors (cpu.py) | ⚠️ Parcial | PDH solo Windows; psutil fallback funciona pero no da turbo freq |
+| CPU temp (cpu.py) | ✅ Funciona | `sensors_temperatures()` con coretemp/k10temp |
+| GPU sensors (gpu.py) | ✅ pynvml cross-platform | Ninguna (NVIDIA driver necesario) |
+| Foreground app (foreground.py) | ⚠️ Parcial | xdotool solo X11, no Wayland; app.process solo Windows |
+| Disk (disk.py) | ✅ Guard "/" vs "C:\\" | Ninguna |
+| Font list (main_window.py) | ⚠️ Cosmetic | Lista de fonts es Windows-only; en Linux no resuelven |
+| System tray (tray.py) | ⚠️ DE-depende | GNOME necesita extension AppIndicator |
+| Renderer fonts | ✅ Fallback chain | DejaVuSans/FreeSans/Liberation en la lista |
+| Path handling | ✅ Normalizado | `replace("\\", "/")` donde necesario |
+
+**Acciones futuras para Linux parity:**
+1. CPU freq real-time: leer `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq`
+2. Foreground Wayland: `swaymsg`/`hyprctl` o D-Bus
+3. Foreground process Linux: parse `/proc` basado en PID
+4. Font list: usar `fc-list` para detectar fuentes disponibles en runtime
+5. Tray GNOME: documentar necesidad de AppIndicator extension
+
+### Actualizacion del bucle de mejora
+
+| Tipo | Ejemplo | Prevencion |
+|------|---------|------------|
+| Cache corruption | Callers dibujaban sobre bg cacheado | Siempre `.copy()` antes de dibujar sobre cache |
+| Dual source of truth | Combo text vs config name | Una unica fuente: `config.active_name` |
+| Video codec seek | CAP_PROP_POS_FRAMES falla en H.265/VP9 | Reopen VideoCapture como fallback |
+| Over-coupling | Video rate = sensor rate | Separar en dos pipelines independientes |
+| State loss | active layout no persistido | `state.json` con write inmediato en `set_active()` |
+
+### Reglas nuevas del bucle
+13. Video loop: seek falla en ciertos codecs → reopen VideoCapture como fallback
+14. Persistencia de estado: cualquier preferencia del usuario → escribir a disco inmediatamente
+15. Single source of truth: never derive critical state from UI widgets — use the data model
+16. Two pipelines: visual refresh (60fps) y data refresh (1s) deben ser independientes
+17. Unit conversion: el sensor emite en unidad nativa, la conversion es responsabilidad del renderer
+
+---
+
+## Sesion 2026-04-04 (cont.) — Bugfixes, FPS Sensor, Element Selector, Modes Planning
+
+### Contexto
+- Font selector no aplicaba correctamente en el renderer (PIL no resuelve family names)
+- Arc bars dificiles de colocar (anchor en esquina vs top-left)
+- Barras lineales sin opcion de orientacion
+- FPS counter mostraba tasa de poll de sensores, no FPS real de juego
+- Auto-save impedia revertir cambios y modificaba templates
+- Reloj no avanzaba cada segundo (cacheado en overlay)
+- Color picker heredaba color del boton padre
+
+### Implementaciones realizadas
+
+#### 1. Font resolution via OS registry (`renderer.py`)
+**Problema:** `ImageFont.truetype("Segoe UI", 16)` falla silenciosamente en PIL — no resuelve nombres de familia de fuente.
+**Solucion:** `_find_font_file(family)` consulta:
+- Windows: `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts` via `winreg`
+- Linux: `fc-match --format=%{file} <family>`
+
+Resuelve "Segoe UI" → `C:\Windows\Fonts\segoeui.ttf`, que PIL si puede abrir.
+Cache de resultados en `_font_path_cache`.
+
+#### 2. Arc bar alignment fix (`ui/editor.py`)
+**Problema:** Editor usaba bounds centrados (`QRectF(-w/2, -h/2, w, h)`) mientras renderer usaba top-left (`el.x, el.y`).
+**Solucion:** Editor cambiado a `QRectF(0, 0, w, h)` — consistente con renderer.
+
+#### 3. Arc bar rotation fix (`ui/editor.py`)
+**Problema:** Arc bars se veian rotados 180 grados en el canvas del editor respecto al renderer y la pantalla real.
+**Causa:** Qt `drawArc` usa angulos counter-clockwise, PIL `draw.arc` usa clockwise. Ambos desde 3 o'clock.
+**Solucion:** Negar los angulos en el editor: `start = -el.bar_start_angle * 16`, `sweep = -el.bar_sweep_angle * 16`.
+
+#### 4. Bar direction support — 4 direcciones
+**Config:** `bar_direction: str = "right"` en `LayoutElement` (right/left/down/up)
+**Renderer:** Calculo de fill area y angulo de gradiente por direccion.
+**Editor:** Preview de 50% fill adaptado a cada direccion.
+**UI:** Combo "Direction" visible solo para tipo `bar` (no arc_bar).
+
+#### 5. Manual save system — eliminacion de auto-save
+**Problema:** Cada cambio guardaba automaticamente, impidiendo revertir y modificando templates.
+**Solucion:**
+- Eliminado `_auto_save()` completamente
+- Flag `_dirty` en `ConfigWindow` — se activa con cualquier cambio
+- Titulo de ventana: `"* TURZX - name"` cuando hay cambios sin guardar
+- `QMessageBox` pregunta antes de cambiar layout o cerrar con cambios pendientes
+- Solo se guarda al pulsar Save o confirmar en el dialogo
+
+#### 6. Clock/date real-time rendering (`renderer.py`)
+**Problema:** `sys.clock` y `sys.date` estaban cacheados en overlay, actualizandose solo cada `refresh_rate` (1-5s). Los segundos no avanzaban fluidamente.
+**Solucion:**
+- `_REALTIME_SENSORS = frozenset(("sys.clock", "sys.date"))` — conjunto de IDs a excluir del overlay
+- `update_overlay()` salta estos sensores
+- `render_frame()` dibuja clock/date directamente en cada frame con `datetime.now()`
+- `_realtime_elements` lista cacheada en `update_overlay()` para evitar filtrar en cada frame
+
+#### 7. Color picker parent fix (`ui/main_window.py`)
+**Problema:** `QColorDialog.getColor(..., self)` donde `self` es `ColorButton` con stylesheet `background:rgb(...)` causaba que el dialogo heredara el color de fondo.
+**Solucion:** `QColorDialog.getColor(..., self.window())` — usa la ventana principal como parent.
+
+#### 8. Game FPS sensor via RTSS (`sensors/fps.py`) — NUEVO
+**Problema:** El anterior `sys.fps` contaba llamadas a `read()` por segundo — no era FPS real.
+`DwmGetCompositionTimingInfo` roto en Win11 24H2 (build 26200+, HRESULT 0x88980090).
+ETW requiere admin. D3DKMT sin API publica para FPS.
+
+**Solucion: RTSS (RivaTuner Statistics Server) shared memory**
+- RTSS (incluido con MSI Afterburner) expone FPS via segmento de memoria compartida `RTSSSharedMemoryV2`
+- Sin privilegios de admin necesarios
+- Estructura: header 20 bytes → array de app entries (284 bytes core cada una)
+- Cada entry: PID, nombre proceso, timestamps, frame count, frame time
+- FPS = `dwFrames * 1000 / (dwTime1 - dwTime0)` o `1000000 / dwFrameTime`
+- **Fallback a highest-FPS entry** cuando foreground no esta tracked por RTSS (ej: editor TURZX en primer plano, juego detras)
+- `ctypes.string_at()` para lectura segura del shared memory (evita access violation con `memmove`)
+- Sensor siempre reporta si RTSS esta activo (0 FPS = ningun juego detectado)
+
+**Limitacion:** Requiere RTSS/MSI Afterburner ejecutandose. Sin RTSS, no hay sensor.
+
+#### 9. Element selector panel (`ui/editor.py`) — NUEVO
+**Problema:** Elementos con Z-order bajo quedaban ocultos detras de otros y no se podian seleccionar en el canvas.
+**Solucion:** `ElementListPanel` — lista de elementos debajo del canvas.
+- Muestra todos los elementos ordenados por Z con nombre descriptivo: `[z=1] Sensor: cpu.percent`
+- Click en la lista selecciona el elemento en el canvas y en el panel de propiedades
+- Sincronizacion bidireccional: seleccionar en canvas → actualiza lista y viceversa
+- Se refresca automaticamente al modificar el layout (signal `layout_modified`)
+
+#### 10. Foreground process sensor removal from sys.fps
+- `sys.fps` ahora es RTSS exclusivo
+- `sys.refresh_rate` monitor Hz removido (era confuso junto a FPS)
+- `app.process` y `app.window_title` permanecen como sensores independientes
+
+### Archivos modificados
+- `renderer.py`: +`_find_font_file()`, `_REALTIME_SENSORS`, `_realtime_elements`, clock per-frame, `datetime` import
+- `config.py`: +`bar_direction` field, `_DEFAULT_LAYOUT_VERSION` → 6
+- `ui/editor.py`: arc_bar bounds fix (top-left), bar direction preview, arc_bar angle negation, +`ElementListPanel`, +`select_element()`, +`get_elements()`
+- `ui/main_window.py`: save system rewrite (_dirty flag, _mark_dirty, _update_title, closeEvent QMessageBox), +bar_direction combo/widget, ColorButton parent fix, +ElementListPanel integration, import update
+- `sensors/system.py`: removed fake FPS counter, removed `sys.refresh_rate`
+- `sensors/fps.py`: NUEVO — RTSS shared memory reader
+- `sensors/foreground.py`: sin cambios sustanciales
+- `sensors/base.py`: +FpsSensor en register_defaults
+
+### Reglas nuevas del bucle
+18. PIL `ImageFont.truetype()` NO resuelve font family names — necesita file path. Usar `_find_font_file()` via winreg/fc-match.
+19. Qt `drawArc` es CCW, PIL `draw.arc` es CW — negar angulos al convertir.
+20. `QColorDialog` parent: nunca usar un widget con stylesheet de color — usar `self.window()`.
+21. Shared memory Win32: preferir `ctypes.string_at(addr, size)` sobre `ctypes.memmove(buf, addr, size)` para lectura — evita access violations con punteros 64-bit.
+22. Game FPS en Windows sin admin: unica via practica es RTSS shared memory. DwmGetCompositionTimingInfo roto en Win11 24H2+, ETW requiere admin.
+23. Auto-save es anti-pattern para editores visuales — usar dirty flag + save explícito.
+24. Sensores real-time (clock/date) deben excluirse del cache de overlay y dibujarse per-frame.

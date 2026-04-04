@@ -26,6 +26,9 @@ dev = [
     "ipython",
     "pynvml>=11.0",
 ]
+video = [
+    "opencv-python>=4.5",  # Video background support
+]
 
 [project.scripts]
 turzx = "turzx.daemon:main"

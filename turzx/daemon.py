@@ -28,8 +28,20 @@ from .tray import TurzxTray
 
 # ── Render thread ──
 
+
 class RenderThread(QThread):
-    """Background thread: read sensors -> render -> send to device."""
+    """Background thread with two independent pipelines:
+
+    1. **Video pipeline** (60 FPS): read next video frame → composite
+       cached overlay → JPEG → send to device.  ~5 ms per frame.
+
+    2. **Sensor pipeline** (refresh_rate, e.g. 1 s): poll sensors →
+       rebuild the text/element overlay image.  ~50 ms but infrequent.
+
+    The overlay is a transparent RGBA image cached between sensor reads.
+    This decoupling lets the video play smoothly at 60 FPS regardless of
+    how often the sensor data refreshes.
+    """
 
     error_occurred = Signal(str)
 
@@ -37,8 +49,16 @@ class RenderThread(QThread):
         super().__init__()
         self.daemon = daemon
         self._running = True
+        self._cached_values: dict = {}
+        self._last_sensor_read: float = 0.0
 
     def run(self) -> None:
+        # Prime sensor cache and build initial overlay
+        self._cached_values = self.daemon.sensors.read_all()
+        self._last_sensor_read = time.monotonic()
+        layout = self.daemon.config.active_layout
+        self.daemon.renderer.update_overlay(layout, self._cached_values)
+
         while self._running:
             try:
                 self._tick()
@@ -46,13 +66,22 @@ class RenderThread(QThread):
                 self.error_occurred.emit(str(e))
                 time.sleep(2)
 
-            rate = self.daemon.config.active_layout.refresh_rate
-            self.msleep(int(1000 / max(rate, 0.1)))
+            fps = self.daemon.config.active_layout.screen_fps
+            self.msleep(int(1000 / max(fps, 1)))
 
     def _tick(self) -> None:
         layout = self.daemon.config.active_layout
-        values = self.daemon.sensors.read_all()
-        jpeg = self.daemon.renderer.render(layout, values)
+        now = time.monotonic()
+
+        # Sensor pipeline: poll sensors and rebuild overlay at refresh_rate
+        sensor_interval = max(layout.refresh_rate, 0.1)
+        if now - self._last_sensor_read >= sensor_interval:
+            self._cached_values = self.daemon.sensors.read_all()
+            self._last_sensor_read = now
+            self.daemon.renderer.update_overlay(layout, self._cached_values)
+
+        # Video pipeline: next background frame + cached overlay → JPEG
+        jpeg = self.daemon.renderer.render_frame(layout)
 
         dev = self.daemon.device
         if dev is None:
@@ -71,6 +100,7 @@ class RenderThread(QThread):
 
 
 # ── Daemon ──
+
 
 class TurzxDaemon(QObject):
     """Central coordinator: owns device, sensors, config, renderer, tray."""
@@ -103,6 +133,7 @@ class TurzxDaemon(QObject):
     def shutdown(self) -> None:
         """Clean stop: render thread, device, then quit Qt."""
         self.stop_render()
+        self.renderer.cleanup()
         self._disconnect_device()
         QApplication.instance().quit()
 
@@ -117,9 +148,7 @@ class TurzxDaemon(QObject):
             self.tray.showMessage("TURZX", "Device connected", self.tray.icon())
         except Exception as e:
             self.device = None
-            self.tray.showMessage(
-                "TURZX", f"Device not found: {e}", self.tray.icon()
-            )
+            self.tray.showMessage("TURZX", f"Device not found: {e}", self.tray.icon())
 
     def _disconnect_device(self) -> None:
         if self.device:
@@ -166,6 +195,7 @@ class TurzxDaemon(QObject):
 
 
 # ── Entry point ──
+
 
 def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
