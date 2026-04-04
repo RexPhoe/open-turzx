@@ -101,6 +101,9 @@ def get_strftime(sensor_id: str, display_unit: str) -> str | None:
     if sensor_id == "sys.date":
         return DATE_FORMATS.get(display_unit)
     return None
+
+
+def available_units(native_unit: str) -> list[str]:
     """Return the list of display unit strings for a given native unit."""
     opts = UNIT_MAP.get(native_unit)
     if not opts:
