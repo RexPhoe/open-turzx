@@ -11,6 +11,50 @@ import psutil
 from .base import SensorBackend, SensorReading
 
 
+# ── Windows: CPU temperature via WMI (LibreHardwareMonitor / OpenHardwareMonitor) ──
+
+
+def _wmi_cpu_temp() -> float | None:
+    """Read max CPU package/core temperature from LibreHardwareMonitor WMI.
+
+    Requires LibreHardwareMonitor (or OpenHardwareMonitor) running with
+    'Run as admin' to populate WMI. Returns None if unavailable.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import subprocess
+        # Try LibreHardwareMonitor namespace first, then OpenHardwareMonitor
+        for namespace in [r"root\LibreHardwareMonitor", r"root\OpenHardwareMonitor"]:
+            wql = (
+                "SELECT Value FROM Sensor "
+                "WHERE SensorType='Temperature' AND "
+                "(Name LIKE '%CPU%' OR Name LIKE '%Core%' OR Name LIKE '%Package%')"
+            )
+            cmd = ["wmic", f"/namespace:{namespace}", "path", "Sensor",
+                   "where", "SensorType='Temperature' AND (Name LIKE '%CPU%' OR Name LIKE '%Core%' OR Name LIKE '%Package%')",
+                   "get", "Value", "/format:csv"]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3,
+                                    creationflags=0x08000000)  # CREATE_NO_WINDOW
+            if result.returncode != 0:
+                continue
+            temps = []
+            for line in result.stdout.strip().splitlines():
+                parts = line.strip().split(",")
+                if len(parts) >= 2:
+                    try:
+                        t = float(parts[-1])
+                        if 0 < t < 150:
+                            temps.append(t)
+                    except (ValueError, IndexError):
+                        pass
+            if temps:
+                return max(temps)
+    except Exception:
+        pass
+    return None
+
+
 # ── Windows: real-time freq via PDH ──
 
 
@@ -123,6 +167,8 @@ class CpuSensors(SensorBackend):
     def __init__(self) -> None:
         psutil.cpu_percent(interval=None)
         self._pdh = _PdhFreqHelper() if sys.platform == "win32" else None
+        self._wmi_temp: float | None = None
+        self._wmi_temp_time: float = 0.0
 
     def read(self) -> list[SensorReading]:
         readings = []
@@ -179,21 +225,34 @@ class CpuSensors(SensorBackend):
             )
         )
 
-        # Temperature
+        # Temperature (max across all cores)
         try:
             temps = psutil.sensors_temperatures()
             if temps:
                 for key in ["coretemp", "k10temp", "cpu_thermal", "acpitz"]:
                     if key in temps and temps[key]:
-                        t = temps[key][0].current
-                        readings.append(
-                            SensorReading(
-                                "cpu.temp", "CPU Temp", round(t, 1), "\u00b0C", "cpu"
+                        t_max = max(e.current for e in temps[key] if e.current > 0)
+                        if t_max > 0:
+                            readings.append(
+                                SensorReading(
+                                    "cpu.temp", "CPU Temp", round(t_max, 1), "\u00b0C", "cpu"
+                                )
                             )
-                        )
-                        break
-        except (AttributeError, OSError):
+                            break
+        except (AttributeError, OSError, ValueError):
             pass
+
+        # Windows fallback: LibreHardwareMonitor / OpenHardwareMonitor WMI (cached, poll every 3s)
+        if not any(r.sensor_id == "cpu.temp" for r in readings) and sys.platform == "win32":
+            import time as _time
+            now = _time.monotonic()
+            if now - self._wmi_temp_time >= 3.0:
+                self._wmi_temp = _wmi_cpu_temp()
+                self._wmi_temp_time = now
+            if self._wmi_temp is not None:
+                readings.append(
+                    SensorReading("cpu.temp", "CPU Temp", round(self._wmi_temp, 1), "\u00b0C", "cpu")
+                )
 
         return readings
 

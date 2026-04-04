@@ -28,7 +28,7 @@ from .config import Layout, LayoutElement
 from .images import to_jpeg
 from .protocol import SCREEN_W, SCREEN_H
 from .sensors.base import SensorReading
-from .sensors.units import convert as convert_unit
+from .sensors.units import convert as convert_unit, get_strftime
 
 # ── Font cache ──
 
@@ -259,9 +259,11 @@ class Renderer:
             now = datetime.now()
             for el in self._realtime_elements:
                 if el.sensor_id == "sys.clock":
-                    val = now.strftime("%H:%M:%S")
+                    fmt = get_strftime("sys.clock", el.display_unit) or "%H:%M:%S"
+                    val = now.strftime(fmt)
                 elif el.sensor_id == "sys.date":
-                    val = now.strftime("%Y-%m-%d")
+                    fmt = get_strftime("sys.date", el.display_unit) or "%Y-%m-%d"
+                    val = now.strftime(fmt)
                 else:
                     continue
                 try:
@@ -484,9 +486,11 @@ class Renderer:
         value = reading.value
         unit = reading.unit
         if el.sensor_id == "sys.clock":
-            value = datetime.now().strftime("%H:%M:%S")
+            fmt = get_strftime("sys.clock", el.display_unit) or "%H:%M:%S"
+            value = datetime.now().strftime(fmt)
         elif el.sensor_id == "sys.date":
-            value = datetime.now().strftime("%Y-%m-%d")
+            fmt = get_strftime("sys.date", el.display_unit) or "%Y-%m-%d"
+            value = datetime.now().strftime(fmt)
 
         # Apply unit conversion if the user chose a different display unit
         elif el.display_unit and isinstance(value, (int, float)):

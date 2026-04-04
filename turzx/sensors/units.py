@@ -61,8 +61,46 @@ UNIT_MAP: dict[str, list[UnitOption]] = {
     ],
 }
 
+# ── Date/time format presets ──
+# Keys are the sensor's native unit marker; values are label→strftime pairs.
+# The renderer uses the display_unit value as a strftime format string.
 
-def available_units(native_unit: str) -> list[str]:
+TIME_FORMATS: dict[str, str] = {
+    "HH:MM:SS": "%H:%M:%S",
+    "HH:MM": "%H:%M",
+    "hh:mm:ss AM": "%I:%M:%S %p",
+    "hh:mm AM": "%I:%M %p",
+}
+
+DATE_FORMATS: dict[str, str] = {
+    "YYYY-MM-DD": "%Y-%m-%d",
+    "DD/MM/YYYY": "%d/%m/%Y",
+    "MM/DD/YYYY": "%m/%d/%Y",
+    "DD Mon YYYY": "%d %b %Y",
+    "Mon DD, YYYY": "%b %d, %Y",
+    "Weekday, DD Mon": "%A, %d %b",
+    "DD/MM/YY": "%d/%m/%y",
+    "MM/DD/YY": "%m/%d/%y",
+}
+
+
+def available_time_formats() -> list[str]:
+    """Return display labels for time format presets."""
+    return list(TIME_FORMATS.keys())
+
+
+def available_date_formats() -> list[str]:
+    """Return display labels for date format presets."""
+    return list(DATE_FORMATS.keys())
+
+
+def get_strftime(sensor_id: str, display_unit: str) -> str | None:
+    """Return strftime format for a clock/date sensor, or None if not applicable."""
+    if sensor_id == "sys.clock":
+        return TIME_FORMATS.get(display_unit)
+    if sensor_id == "sys.date":
+        return DATE_FORMATS.get(display_unit)
+    return None
     """Return the list of display unit strings for a given native unit."""
     opts = UNIT_MAP.get(native_unit)
     if not opts:

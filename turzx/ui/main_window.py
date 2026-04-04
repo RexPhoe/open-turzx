@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 from ..config import Layout, LayoutElement, Background, ModeConfig, ReactiveRule, RotativeConfig, ReactiveConfig
 from ..protocol import SCREEN_W, SCREEN_H
 from ..sensors.units import available_units
+from ..sensors.units import available_time_formats, available_date_formats
 from ..i18n import _
 from .editor import EditorScene, LayoutCanvas, ElementListPanel
 from .preview import PreviewWidget
@@ -469,11 +470,24 @@ class PropertiesPanel(QScrollArea):
         self._on_elem()
 
     def _refresh_unit_combo(self, sensor_id: str):
-        """Populate the unit combo based on the sensor's native unit."""
-        native = self._sensor_units.get(sensor_id, "")
-        units = available_units(native)
+        """Populate the unit combo based on the sensor's native unit or date/time formats."""
         self._cb_unit.blockSignals(True)
         self._cb_unit.clear()
+
+        # Date/time sensors get format presets instead of unit conversion
+        if sensor_id == "sys.clock":
+            self._cb_unit.addItem("(native)")
+            self._cb_unit.addItems(available_time_formats())
+            self._cb_unit.blockSignals(False)
+            return
+        if sensor_id == "sys.date":
+            self._cb_unit.addItem("(native)")
+            self._cb_unit.addItems(available_date_formats())
+            self._cb_unit.blockSignals(False)
+            return
+
+        native = self._sensor_units.get(sensor_id, "")
+        units = available_units(native)
         if units:
             self._cb_unit.addItem("(native)")
             self._cb_unit.addItems(units)
@@ -1024,14 +1038,12 @@ class ConfigWindow(QMainWindow):
         self.daemon.config.save_layout(layout, self.daemon.config.active_name)
         self._dirty = False
         self._update_title()
-        self.daemon.mode_controller.resume()
 
     def _mark_dirty(self):
         """Mark layout as having unsaved changes."""
         if not self._dirty:
             self._dirty = True
             self._update_title()
-            self.daemon.mode_controller.pause()
 
     def _update_title(self):
         name = self.daemon.config.active_name
@@ -1291,6 +1303,11 @@ class ConfigWindow(QMainWindow):
 
     # ── Window lifecycle ──
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Pause mode auto-switching while the editor is open
+        self.daemon.mode_controller.pause()
+
     def closeEvent(self, event):
         if self._dirty:
             reply = QMessageBox.question(
@@ -1304,7 +1321,9 @@ class ConfigWindow(QMainWindow):
             if reply == QMessageBox.StandardButton.Yes:
                 self._save_layout()
             else:
-                # User discarded changes — resume mode controller
-                self.daemon.mode_controller.resume()
+                # User discarded changes
+                self._dirty = False
+        # Resume mode controller when editor closes
+        self.daemon.mode_controller.resume()
         event.ignore()
         self.hide()
