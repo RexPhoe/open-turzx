@@ -392,6 +392,37 @@ class PropertiesPanel(QScrollArea):
         bpl.addWidget(self._ed_bg_path)
         bpl.addWidget(self._btn_bg_browse)
         bf.addRow(_("Path:"), bpc)
+
+        # Media placement controls (visible for image/video)
+        self._w_bg_crop = QWidget()
+        crop_form = QFormLayout(self._w_bg_crop)
+        crop_form.setSpacing(3)
+        crop_form.setContentsMargins(0, 0, 0, 0)
+        self._sp_bg_x = QSpinBox()
+        self._sp_bg_x.setRange(-480, 480)
+        self._sp_bg_y = QSpinBox()
+        self._sp_bg_y.setRange(-480, 480)
+        self._sp_bg_w = QSpinBox()
+        self._sp_bg_w.setRange(0, 960)
+        self._sp_bg_h = QSpinBox()
+        self._sp_bg_h.setRange(0, 960)
+        for sp in (self._sp_bg_x, self._sp_bg_y, self._sp_bg_w, self._sp_bg_h):
+            sp.setToolTip(_("0 = full screen dimension"))
+        crop_xy = QHBoxLayout()
+        crop_xy.addWidget(QLabel("X:"))
+        crop_xy.addWidget(self._sp_bg_x)
+        crop_xy.addWidget(QLabel("Y:"))
+        crop_xy.addWidget(self._sp_bg_y)
+        crop_form.addRow(_("Position:"), crop_xy)
+        crop_wh = QHBoxLayout()
+        crop_wh.addWidget(QLabel("W:"))
+        crop_wh.addWidget(self._sp_bg_w)
+        crop_wh.addWidget(QLabel("H:"))
+        crop_wh.addWidget(self._sp_bg_h)
+        crop_form.addRow(_("Size:"), crop_wh)
+        self._w_bg_crop.setVisible(False)
+        bgl.addWidget(self._w_bg_crop)
+
         bgl.addLayout(bf)
 
         root.addWidget(grp_bg)
@@ -446,12 +477,14 @@ class PropertiesPanel(QScrollArea):
         self._sp_arc_sweep.valueChanged.connect(self._on_elem)
 
         # Background signals
-        self._r_solid.toggled.connect(lambda c: self._on_bg() if c else None)
-        self._r_image.toggled.connect(lambda c: self._on_bg() if c else None)
-        self._r_video.toggled.connect(lambda c: self._on_bg() if c else None)
+        self._r_solid.toggled.connect(self._on_bg_type_toggle)
+        self._r_image.toggled.connect(self._on_bg_type_toggle)
+        self._r_video.toggled.connect(self._on_bg_type_toggle)
         self._btn_bg_col.color_changed.connect(lambda _: self._on_bg())
         self._ed_bg_path.textChanged.connect(self._on_bg)
         self._btn_bg_browse.clicked.connect(self._pick_bg)
+        for sp in (self._sp_bg_x, self._sp_bg_y, self._sp_bg_w, self._sp_bg_h):
+            sp.valueChanged.connect(self._on_bg)
 
     def _on_gradient_toggle(self, checked: bool):
         self._w_gradient.setVisible(checked)
@@ -620,6 +653,11 @@ class PropertiesPanel(QScrollArea):
         ).setChecked(True)
         self._btn_bg_col.set_color(bg.color)
         self._ed_bg_path.setText(bg.path)
+        self._sp_bg_x.setValue(bg.crop_x)
+        self._sp_bg_y.setValue(bg.crop_y)
+        self._sp_bg_w.setValue(bg.crop_w)
+        self._sp_bg_h.setValue(bg.crop_h)
+        self._w_bg_crop.setVisible(bg.type != "solid")
         self._updating = False
 
     def update_sensors(self, ids: list[str]) -> None:
@@ -700,6 +738,13 @@ class PropertiesPanel(QScrollArea):
                 el.stroke_width = 0
         self.property_changed.emit(el)
 
+    def _on_bg_type_toggle(self, checked: bool):
+        if not checked:
+            return
+        is_media = not self._r_solid.isChecked()
+        self._w_bg_crop.setVisible(is_media)
+        self._on_bg()
+
     def _on_bg(self, *_):
         if self._updating:
             return
@@ -712,6 +757,10 @@ class PropertiesPanel(QScrollArea):
             type=bg_type,
             color=self._btn_bg_col.get_color(),
             path=self._ed_bg_path.text(),
+            crop_x=self._sp_bg_x.value(),
+            crop_y=self._sp_bg_y.value(),
+            crop_w=self._sp_bg_w.value(),
+            crop_h=self._sp_bg_h.value(),
         )
         self.background_changed.emit(bg)
 
@@ -723,16 +772,17 @@ class PropertiesPanel(QScrollArea):
             self._ed_img.setText(p)
 
     def _pick_bg(self):
+        img_filter = "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
+        vid_filter = "Videos (*.mp4 *.avi *.mkv *.mov *.webm)"
+        # Default to video filter when video radio is selected
+        if self._r_video.isChecked():
+            filters = f"{vid_filter};;{img_filter};;All (*)"
+        else:
+            filters = f"{img_filter};;{vid_filter};;All (*)"
         p, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Background",
-            "",
-            "Images (*.png *.jpg *.jpeg *.bmp);;"
-            "Videos (*.mp4 *.avi *.mkv *.mov *.gif);;"
-            "All (*)",
+            self, _("Select Background"), "", filters,
         )
         if p:
-            # Auto-select the right radio based on file extension
             ext = p.rsplit(".", 1)[-1].lower() if "." in p else ""
             if ext in ("mp4", "avi", "mkv", "mov", "webm"):
                 self._r_video.setChecked(True)

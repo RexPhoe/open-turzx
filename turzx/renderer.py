@@ -329,25 +329,49 @@ class Renderer:
             return Image.new("RGB", (self.width, self.height), tuple(bg.color))
 
         elif bg.type == "image" and bg.path:
-            return self._get_static_bg(bg.path, bg.color)
+            return self._get_static_bg(bg)
 
         elif bg.type == "video" and bg.path:
             frame = self._read_video_frame(bg.path)
             if frame is not None:
-                return frame
+                return self._place_bg_media(frame, bg)
 
         # Default fallback
         return Image.new("RGB", (self.width, self.height), (15, 15, 25))
 
-    def _get_static_bg(self, path: str, fallback_color: list[int]) -> Image.Image:
+    def _place_bg_media(self, src: Image.Image, bg) -> Image.Image:
+        """Resize source to target rect preserving aspect ratio, paste on canvas."""
+        tw = bg.crop_w if bg.crop_w > 0 else self.width
+        th = bg.crop_h if bg.crop_h > 0 else self.height
+
+        if tw == self.width and th == self.height and bg.crop_x == 0 and bg.crop_y == 0:
+            # Full screen — stretch to fill (legacy behaviour)
+            return src.resize((self.width, self.height), Image.BILINEAR)
+
+        # Fit within target rect preserving aspect ratio
+        sw, sh = src.size
+        scale = min(tw / sw, th / sh)
+        nw, nh = int(sw * scale), int(sh * scale)
+        resized = src.resize((nw, nh), Image.BILINEAR)
+
+        canvas = Image.new("RGB", (self.width, self.height), tuple(bg.color))
+        # Center within the target rect
+        ox = bg.crop_x + (tw - nw) // 2
+        oy = bg.crop_y + (th - nh) // 2
+        canvas.paste(resized, (ox, oy))
+        return canvas
+
+    def _get_static_bg(self, bg) -> Image.Image:
         """Load and cache a static image background."""
-        if self._static_bg_path != path or self._static_bg is None:
+        path = bg.path
+        fallback_color = bg.color
+        # Invalidate cache if path or crop changed
+        cache_key = (path, bg.crop_x, bg.crop_y, bg.crop_w, bg.crop_h)
+        if self._static_bg_path != cache_key or self._static_bg is None:
             try:
                 img = Image.open(path).convert("RGB")
-                self._static_bg = img.resize(
-                    (self.width, self.height), Image.LANCZOS
-                )
-                self._static_bg_path = path
+                self._static_bg = self._place_bg_media(img, bg)
+                self._static_bg_path = cache_key
             except Exception:
                 self._static_bg = None
                 self._static_bg_path = None
@@ -409,9 +433,7 @@ class Renderer:
 
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(frame)
-                self._video_frame = img.resize(
-                    (self.width, self.height), Image.BILINEAR
-                )
+                self._video_frame = img
                 self._video_frame_time = now
                 return self._video_frame
             except Exception:

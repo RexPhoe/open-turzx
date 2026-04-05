@@ -38,6 +38,11 @@ class Background:
     type: str = "solid"  # "solid", "image", "video"
     color: list[int] = field(default_factory=lambda: [15, 15, 25])
     path: str = ""  # for image/video types
+    # Video/image placement (default: fill entire screen)
+    crop_x: int = 0
+    crop_y: int = 0
+    crop_w: int = 0  # 0 = full screen width
+    crop_h: int = 0  # 0 = full screen height
 
     def to_dict(self) -> dict:
         return asdict(self)

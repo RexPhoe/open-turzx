@@ -1420,3 +1420,97 @@ ConfigWindow._canvas_timer (200ms static / 100ms video)
 38. No duplicar renders: un solo timer de canvas es suficiente. Si el canvas muestra el render real, no hay necesidad de un widget preview separado.
 39. "Pause" (tray) = detener render thread completo. "Pause Mode" (tray + UI) = pausar solo auto-switching. Son funciones distintas, ambas necesarias.
 40. El botón Pause Mode en la UI debe ser checkable y sincronizarse con `mode_controller._paused` — incluyendo cuando Apply Mode hace `reload()` (que resetea paused).
+
+---
+
+## Sesion 10 — File dialog inteligente + Posición/tamaño de fondo (2026-04-06)
+
+### Problema
+1. **File dialog de fondo**: Al buscar un video de fondo, el diálogo mostraba por defecto el filtro "Images", obligando al usuario a cambiar manualmente al filtro "Videos". Además `.gif` estaba en el filtro de videos pero se clasificaba como imagen, y `.webm` faltaba en el filtro.
+2. **Deformación de fondos**: Videos e imágenes de fondo siempre se estiraban para rellenar la pantalla 480x480, deformando contenido con aspect ratio diferente. No había forma de posicionar o dimensionar el fondo.
+
+### Solución
+
+#### File dialog contextual
+El filtro por defecto ahora depende del radio button seleccionado:
+- Si `Video` está seleccionado → filtro "Videos" primero
+- Si no → filtro "Images" primero
+- Corregido: `.gif` en filtro Images (no Videos), `.webm` añadido al filtro Videos
+
+#### Posición y tamaño de fondo
+Nuevos campos en `Background`: `crop_x`, `crop_y`, `crop_w`, `crop_h`.
+
+**Comportamiento:**
+- `crop_w=0, crop_h=0` → stretch completo (compatibilidad con layouts existentes)
+- Valores > 0 → fit con aspect ratio dentro del rect `(crop_w × crop_h)`, centrado en `(crop_x, crop_y)`
+- El espacio restante se rellena con el color sólido del fondo
+
+```
+┌─────────────── 480×480 canvas ───────────────┐
+│  bg.color fill                               │
+│    ┌──────────────────────┐                  │
+│    │ crop_x, crop_y       │                  │
+│    │  ┌──────────────┐    │                  │
+│    │  │ video/image   │    │ crop_h           │
+│    │  │ (fit, centered)│   │                  │
+│    │  └──────────────┘    │                  │
+│    └──── crop_w ──────────┘                  │
+└──────────────────────────────────────────────┘
+```
+
+### Cambios
+
+#### `config.py`
+- `Background`: +`crop_x: int = 0`, +`crop_y: int = 0`, +`crop_w: int = 0`, +`crop_h: int = 0`
+- Default 0 = full screen → retrocompatible con JSON existente
+
+#### `renderer.py`
+
+**`_place_bg_media(src, bg)`** — NUEVO:
+- Si todos los crop son 0 (o coinciden con pantalla completa) → stretch legacy
+- Si no: fit preservando aspect ratio, centrado dentro del rect, canvas con `bg.color`
+
+**`_get_background()`**:
+- Video: `_read_video_frame()` retorna frame RAW (sin resize) → `_place_bg_media()` aplica posicionamiento
+- Imagen: `_get_static_bg()` ahora recibe `bg` completo, usa `_place_bg_media()`, cache key incluye crop
+
+**`_read_video_frame()`**:
+- Ya NO hace `img.resize()` — retorna tamaño original del video
+
+**`_get_static_bg(bg)`**:
+- Signature cambiada: recibe `bg` en vez de `(path, color)`
+- Cache key: `(path, crop_x, crop_y, crop_w, crop_h)` — invalida al cambiar posición
+
+#### `ui/main_window.py`
+
+**`PropertiesPanel` — Controles de posición:**
+- Widget `_w_bg_crop` con spinners: X, Y (rango -480..480), W, H (rango 0..960)
+- Tooltip "0 = full screen dimension"
+- Visible solo para image/video (oculto para solid)
+- Conectados a `_on_bg()` para emisión inmediata
+
+**`_on_bg_type_toggle()`** — NUEVO:
+- Muestra/oculta `_w_bg_crop` según tipo de fondo
+
+**`_on_bg()`** actualizado:
+- Incluye `crop_x`, `crop_y`, `crop_w`, `crop_h` del Background
+
+**`set_background()`** actualizado:
+- Puebla spinners de crop y visibilidad de `_w_bg_crop`
+
+**`_pick_bg()`** reescrito:
+- Filtro dinámico: Videos first si radio Video seleccionado, Images first si no
+- `.gif` solo en Images, `.webm` añadido a Videos
+- Auto-detect de tipo por extensión sin cambios
+
+### Auditoria Linux
+
+**File dialog: 100% compatible.** `QFileDialog.getOpenFileName` funciona igual en todas las plataformas.
+
+**Crop/position: 100% compatible.** `_place_bg_media()` usa solo PIL — `Image.resize()`, `Image.new()`, `Image.paste()`.
+
+### Reglas nuevas del bucle
+41. El filtro del file dialog de fondo debe priorizar el tipo de archivo que el usuario ya tiene seleccionado (radio button).
+42. `_read_video_frame()` retorna el frame en su tamaño original — el posicionamiento se aplica en `_place_bg_media()`, no en el reader.
+43. `crop_w=0` y `crop_h=0` significan "pantalla completa" — esto garantiza que layouts antiguos sin crop fields funcionen como siempre (stretch completo).
+44. El cache de `_get_static_bg` debe incluir los crop values en la key — si el usuario mueve la posición, debe re-renderizar.
