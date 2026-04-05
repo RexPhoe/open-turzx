@@ -21,9 +21,11 @@ from PySide6.QtWidgets import QApplication
 
 from .config import ConfigManager
 from .device import TurzxDevice
+from .images import to_jpeg
 from .modes import ModeController
 from .renderer import Renderer
 from .sensors.base import SensorManager
+from .transitions import apply as apply_transition
 from .tray import TurzxTray
 
 
@@ -42,6 +44,10 @@ class RenderThread(QThread):
     The overlay is a transparent RGBA image cached between sensor reads.
     This decoupling lets the video play smoothly at 60 FPS regardless of
     how often the sensor data refreshes.
+
+    **Transitions**: when the active layout name changes (rotative/reactive
+    mode switch), the thread blends the old frame into the new one over a
+    configurable duration using the selected transition effect.
     """
 
     error_occurred = Signal(str)
@@ -53,11 +59,19 @@ class RenderThread(QThread):
         self._cached_values: dict = {}
         self._last_sensor_read: float = 0.0
 
+        # Transition state
+        self._last_layout_name: str = ""
+        self._transition_old_frame = None  # PIL Image
+        self._transition_start: float = 0.0
+        self._transition_duration: float = 0.0
+        self._transition_type: str = "none"
+
     def run(self) -> None:
         # Prime sensor cache and build initial overlay
         self._cached_values = self.daemon.sensors.read_all()
         self._last_sensor_read = time.monotonic()
         layout = self.daemon.config.active_layout
+        self._last_layout_name = self.daemon.config.active_name
         self.daemon.renderer.update_overlay(layout, self._cached_values)
 
         while self._running:
@@ -72,7 +86,15 @@ class RenderThread(QThread):
 
     def _tick(self) -> None:
         layout = self.daemon.config.active_layout
+        current_name = self.daemon.config.active_name
         now = time.monotonic()
+
+        # Detect layout switch → start transition
+        if current_name != self._last_layout_name:
+            self._start_transition(now)
+            self._last_layout_name = current_name
+            # Force overlay rebuild for new layout
+            self.daemon.renderer.update_overlay(layout, self._cached_values)
 
         # Sensor pipeline: poll sensors and rebuild overlay at refresh_rate
         sensor_interval = max(layout.refresh_rate, 0.1)
@@ -81,8 +103,29 @@ class RenderThread(QThread):
             self._last_sensor_read = now
             self.daemon.renderer.update_overlay(layout, self._cached_values)
 
-        # Video pipeline: next background frame + cached overlay → JPEG
-        jpeg = self.daemon.renderer.render_frame(layout)
+        # Video pipeline: compose frame as PIL Image
+        new_frame = self.daemon.renderer._compose_frame(layout)
+
+        # Apply transition blending if active
+        if self._transition_old_frame is not None:
+            elapsed = now - self._transition_start
+            duration = max(self._transition_duration, 0.1)
+            progress = min(elapsed / duration, 1.0)
+            if progress >= 1.0:
+                # Transition complete
+                self._transition_old_frame = None
+            else:
+                new_frame = apply_transition(
+                    self._transition_old_frame, new_frame,
+                    progress, self._transition_type,
+                )
+
+        # Encode to JPEG
+        jpeg = to_jpeg(new_frame, self.daemon.renderer.width,
+                       self.daemon.renderer.height, rotate=layout.rotation)
+
+        # Cache the frame for next transition
+        self._last_frame = new_frame
 
         dev = self.daemon.device
         if dev is None:
@@ -94,6 +137,25 @@ class RenderThread(QThread):
         except Exception:
             # Device disconnected or error — try to reconnect
             self.daemon.reconnect_device()
+
+    def _start_transition(self, now: float) -> None:
+        """Capture old frame and read transition settings from mode config."""
+        old = getattr(self, "_last_frame", None)
+        if old is None:
+            return
+        mc = self.daemon.config.mode_config
+        if mc.mode == "rotative":
+            self._transition_type = mc.rotative.transition
+            self._transition_duration = mc.rotative.transition_duration
+        elif mc.mode == "reactive":
+            self._transition_type = mc.reactive.transition
+            self._transition_duration = mc.reactive.transition_duration
+        else:
+            return
+        if self._transition_type == "none":
+            return
+        self._transition_old_frame = old.copy()
+        self._transition_start = now
 
     def stop(self) -> None:
         self._running = False

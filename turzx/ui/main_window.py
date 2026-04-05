@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QDoubleSpinBox,
     QLineEdit,
     QGroupBox,
     QRadioButton,
@@ -40,6 +41,7 @@ from ..config import Layout, LayoutElement, Background, ModeConfig, ReactiveRule
 from ..protocol import SCREEN_W, SCREEN_H
 from ..sensors.units import available_units
 from ..sensors.units import available_time_formats, available_date_formats
+from ..transitions import TRANSITIONS
 from ..i18n import _
 from .editor import EditorScene, LayoutCanvas, ElementListPanel
 from .preview import PreviewWidget
@@ -843,6 +845,20 @@ class ConfigWindow(QMainWindow):
         self._sp_rotate_interval.setValue(30)
         intv_row.addWidget(self._sp_rotate_interval)
         rot_l.addLayout(intv_row)
+        trans_row = QHBoxLayout()
+        trans_row.addWidget(QLabel(_("Transition:")))
+        self._cb_rot_transition = QComboBox()
+        self._cb_rot_transition.addItems(TRANSITIONS)
+        trans_row.addWidget(self._cb_rot_transition)
+        rot_l.addLayout(trans_row)
+        dur_row = QHBoxLayout()
+        dur_row.addWidget(QLabel(_("Duration (s):")))
+        self._sp_rot_duration = QDoubleSpinBox()
+        self._sp_rot_duration.setRange(0.1, 3.0)
+        self._sp_rot_duration.setSingleStep(0.1)
+        self._sp_rot_duration.setValue(0.5)
+        dur_row.addWidget(self._sp_rot_duration)
+        rot_l.addLayout(dur_row)
         self._w_rotative.setVisible(False)
         mgl.addWidget(self._w_rotative)
 
@@ -866,6 +882,20 @@ class ConfigWindow(QMainWindow):
         self._combo_fallback.addItems(self.daemon.config.list_layouts())
         fb_row.addWidget(self._combo_fallback)
         react_l.addLayout(fb_row)
+        rtrans_row = QHBoxLayout()
+        rtrans_row.addWidget(QLabel(_("Transition:")))
+        self._cb_react_transition = QComboBox()
+        self._cb_react_transition.addItems(TRANSITIONS)
+        rtrans_row.addWidget(self._cb_react_transition)
+        react_l.addLayout(rtrans_row)
+        rdur_row = QHBoxLayout()
+        rdur_row.addWidget(QLabel(_("Duration (s):")))
+        self._sp_react_duration = QDoubleSpinBox()
+        self._sp_react_duration.setRange(0.1, 3.0)
+        self._sp_react_duration.setSingleStep(0.1)
+        self._sp_react_duration.setValue(0.5)
+        rdur_row.addWidget(self._sp_react_duration)
+        react_l.addLayout(rdur_row)
         self._w_reactive.setVisible(False)
         mgl.addWidget(self._w_reactive)
 
@@ -1103,8 +1133,18 @@ class ConfigWindow(QMainWindow):
 
         mc = ModeConfig(
             mode=mode,
-            rotative=RotativeConfig(layouts=rot_layouts, interval=rot_interval),
-            reactive=ReactiveConfig(rules=rules, fallback_layout=fallback),
+            rotative=RotativeConfig(
+                layouts=rot_layouts,
+                interval=rot_interval,
+                transition=self._cb_rot_transition.currentText(),
+                transition_duration=self._sp_rot_duration.value(),
+            ),
+            reactive=ReactiveConfig(
+                rules=rules,
+                fallback_layout=fallback,
+                transition=self._cb_react_transition.currentText(),
+                transition_duration=self._sp_react_duration.value(),
+            ),
         )
         self.daemon.config.save_mode_config(mc)
         self.daemon.mode_controller.reload()
@@ -1156,6 +1196,10 @@ class ConfigWindow(QMainWindow):
                 Qt.CheckState.Checked if item.text() in rot_set else Qt.CheckState.Unchecked
             )
         self._sp_rotate_interval.setValue(mc.rotative.interval)
+        idx = self._cb_rot_transition.findText(mc.rotative.transition)
+        if idx >= 0:
+            self._cb_rot_transition.setCurrentIndex(idx)
+        self._sp_rot_duration.setValue(mc.rotative.transition_duration)
 
         # Reactive: build rule list
         self._list_rules.clear()
@@ -1164,6 +1208,10 @@ class ConfigWindow(QMainWindow):
         idx = self._combo_fallback.findText(mc.reactive.fallback_layout)
         if idx >= 0:
             self._combo_fallback.setCurrentIndex(idx)
+        idx = self._cb_react_transition.findText(mc.reactive.transition)
+        if idx >= 0:
+            self._cb_react_transition.setCurrentIndex(idx)
+        self._sp_react_duration.setValue(mc.reactive.transition_duration)
 
     # ── Add elements ──
 

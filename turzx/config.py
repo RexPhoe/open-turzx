@@ -154,15 +154,24 @@ class RotativeConfig:
 
     layouts: list[str] = field(default_factory=list)
     interval: int = 30  # seconds between switches
+    transition: str = "fade"
+    transition_duration: float = 0.5  # seconds
 
     def to_dict(self) -> dict:
-        return {"layouts": list(self.layouts), "interval": self.interval}
+        return {
+            "layouts": list(self.layouts),
+            "interval": self.interval,
+            "transition": self.transition,
+            "transition_duration": self.transition_duration,
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> RotativeConfig:
         return cls(
             layouts=list(d.get("layouts", [])),
             interval=d.get("interval", 30),
+            transition=d.get("transition", "fade"),
+            transition_duration=d.get("transition_duration", 0.5),
         )
 
 
@@ -172,11 +181,15 @@ class ReactiveConfig:
 
     rules: list[ReactiveRule] = field(default_factory=list)
     fallback_layout: str = "default"
+    transition: str = "fade"
+    transition_duration: float = 0.5  # seconds
 
     def to_dict(self) -> dict:
         return {
             "rules": [r.to_dict() for r in self.rules],
             "fallback_layout": self.fallback_layout,
+            "transition": self.transition,
+            "transition_duration": self.transition_duration,
         }
 
     @classmethod
@@ -184,6 +197,8 @@ class ReactiveConfig:
         return cls(
             rules=[ReactiveRule.from_dict(r) for r in d.get("rules", [])],
             fallback_layout=d.get("fallback_layout", "default"),
+            transition=d.get("transition", "fade"),
+            transition_duration=d.get("transition_duration", 0.5),
         )
 
 

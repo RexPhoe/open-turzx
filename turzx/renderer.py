@@ -249,6 +249,11 @@ class Renderer:
         overlay on top, draws real-time sensors (clock/date), rotates,
         and encodes to JPEG.
         """
+        img = self._compose_frame(layout)
+        return to_jpeg(img, self.width, self.height, rotate=layout.rotation)
+
+    def _compose_frame(self, layout: Layout) -> Image.Image:
+        """Compose one frame as a PIL Image (pre-JPEG, pre-rotation)."""
         bg = self._get_background(layout).copy()
         if self._overlay is not None:
             bg.paste(self._overlay, (0, 0), self._overlay)
@@ -272,7 +277,7 @@ class Renderer:
                     text = val
                 self._render_text_on(bg, draw, text, el)
 
-        return to_jpeg(bg, self.width, self.height, rotate=layout.rotation)
+        return bg
 
     def render_image(
         self, layout: Layout, sensor_values: dict[str, SensorReading]

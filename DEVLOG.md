@@ -1172,3 +1172,90 @@ ModeController se pausa cuando el editor tiene cambios sin guardar (`_dirty`).
 29. MAHM shared memory v2: entry_size=1324, datos reales en offset +1300 (no +780 como sugeriría el struct naive).
 30. El editor y el mode controller son sistemas independientes — el editor no debe pausar/reanudar modos. Solo sincroniza UI via signal `layout_switched` cuando no hay edits pendientes.
 24. Sensores real-time (clock/date) deben excluirse del cache de overlay y dibujarse per-frame.
+
+---
+
+## Sesion 7 — Layout Transitions (2026-04-05)
+
+### Problema
+Al cambiar de layout (rotativo o reactivo), la transición era instantánea y brusca — primero cambiaba el fondo de video y luego se actualizaba el texto, causando un efecto visual extraño.
+
+### Solución — Motor de transiciones PIL
+
+Nuevo módulo `turzx/transitions.py` con transiciones frame-a-frame usando PIL puro (cross-platform):
+
+**Efectos disponibles:**
+- `none` — cambio instantáneo (default para static)
+- `fade` — crossfade entre frames
+- `swipe_left` / `swipe_right` — desplazamiento horizontal
+- `swipe_up` / `swipe_down` — desplazamiento vertical
+
+**Arquitectura:**
+
+```
+RenderThread._tick()
+    ├── Detecta cambio de layout (current_name != _last_layout_name)
+    ├── _start_transition(): captura frame actual como old_frame
+    │   └── lee transition type + duration desde mode_config
+    ├── _compose_frame(): genera new_frame con el layout nuevo
+    └── Si hay transición activa:
+        ├── progress = elapsed / duration (0.0 → 1.0)
+        ├── apply_transition(old_frame, new_frame, progress, type)
+        └── Cuando progress >= 1.0: transición completa, limpiar estado
+```
+
+El motor opera a nivel de frames PIL completos (overlay + background ya compuestos), así que la transición es atómica — no hay desincronización entre fondo y texto.
+
+### Cambios
+
+#### `transitions.py` — NUEVO
+- `apply(old, new, progress, kind)` → `Image.Image`
+- 5 funciones de blending: `_fade`, `_swipe_left/right/up/down`
+- Dispatch dict para extensibilidad
+- `TRANSITIONS` list exportada para UI
+
+#### `config.py`
+- `RotativeConfig`: +`transition: str = "fade"`, +`transition_duration: float = 0.5`
+- `ReactiveConfig`: +`transition: str = "fade"`, +`transition_duration: float = 0.5`
+- `to_dict()` / `from_dict()` incluyen ambos campos
+
+#### `renderer.py`
+- `render_frame()` refactorizado: delega a `_compose_frame()` para PIL Image
+- `_compose_frame()`: compone un frame completo (bg + overlay + real-time) como PIL Image
+- `to_jpeg()` importado desde `images.py` para conversión final
+
+#### `daemon.py` — RenderThread con motor de transición
+- Estado de transición: `_transition_old_frame`, `_transition_start`, `_transition_duration`, `_transition_type`
+- `_tick()`: detecta cambio de layout → `_start_transition(now)` → blending per-frame
+- `_start_transition()`: captura último frame, lee config de transición desde mode_config
+- Solo activo en modos rotative/reactive (static no genera cambios de layout)
+
+#### `ui/main_window.py` — UI de transiciones
+- Import: `QDoubleSpinBox`, `TRANSITIONS`
+- Panel rotativo: +combo "Transition" (none/fade/swipe_*) + spinner "Duration" (0.1-3.0s)
+- Panel reactivo: +combo "Transition" + spinner "Duration" (idem)
+- `_apply_mode()`: incluye transition + transition_duration en ModeConfig
+- `_load_mode_ui()`: restaura valores de transición desde config
+
+### Auditoria Linux
+
+**Transiciones: 100% compatible.** Todo es PIL puro — `Image.blend()`, `Image.new()`, `Image.paste()`. Sin dependencias de plataforma.
+
+**Resumen actualizado de compatibilidad:**
+
+| Componente | Linux | Nota |
+|---|---|---|
+| transitions.py | ✅ | PIL puro |
+| modes.py | ✅ | QTimers, no OS deps |
+| renderer.py | ✅ | PIL + cv2 (opcional) |
+| cpu temp (MAHM) | ❌ Windows-only | Linux: `psutil.sensors_temperatures()` |
+| cpu freq (PDH) | ❌ Windows-only | Linux: `/sys/...cpufreq/scaling_cur_freq` |
+| foreground app | ⚠️ Parcial | Windows: ctypes, Linux: xdotool (X11 only) |
+| FPS sensor (RTSS) | ❌ Windows-only | Sin equivalente Linux directo |
+| USB device | ✅ | libusb sistema |
+| tray icon | ⚠️ | GNOME necesita AppIndicator |
+
+### Reglas nuevas del bucle
+31. Las transiciones deben operar sobre frames PIL completos (post-compose) — nunca sobre capas individuales, para evitar desincronización fondo/texto.
+32. `_start_transition()` captura el frame ANTES del cambio — si no hay frame previo, salta la transición silenciosamente.
+33. Transiciones solo aplican en modos no-estáticos — en static, el usuario cambia manualmente y espera resultado inmediato.
