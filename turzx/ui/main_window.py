@@ -2,7 +2,7 @@
 turzx/ui/main_window.py — Configuration window with visual editor
 =================================================================
 Integrates the drag-and-drop canvas editor, properties panel,
-toolbox, and live preview.
+and toolbox.  The canvas shows real PIL-rendered output.
 """
 
 from __future__ import annotations
@@ -44,7 +44,6 @@ from ..sensors.units import available_time_formats, available_date_formats
 from ..transitions import TRANSITIONS
 from ..i18n import _
 from .editor import EditorScene, LayoutCanvas, ElementListPanel
-from .preview import PreviewWidget
 
 if TYPE_CHECKING:
     from ..daemon import TurzxDaemon
@@ -766,15 +765,9 @@ class ConfigWindow(QMainWindow):
         self._elem_list = ElementListPanel(self._scene)
         self._props = PropertiesPanel(sensor_ids)
         self._props.update_sensor_units(sensor_unit_map)
-        self._preview = PreviewWidget()
 
         self._build_ui(sensor_ids)
         self._connect_signals()
-
-        # live preview timer (must exist before _load_layout -> _adjust_preview_timer)
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick_preview)
-        self._timer.start(2000)
 
         # Canvas render timer — updates editor canvas with real rendered output
         self._canvas_timer = QTimer(self)
@@ -906,6 +899,10 @@ class ConfigWindow(QMainWindow):
 
         self._btn_apply_mode = QPushButton(_("Apply Mode"))
         mgl.addWidget(self._btn_apply_mode)
+        self._btn_pause_mode = QPushButton(_("Pause Mode"))
+        self._btn_pause_mode.setCheckable(True)
+        self._btn_pause_mode.setVisible(False)
+        mgl.addWidget(self._btn_pause_mode)
         ll.addWidget(mg)
 
         # Sensor update interval
@@ -957,14 +954,12 @@ class ConfigWindow(QMainWindow):
         ll.addStretch()
         splitter.addWidget(left)
 
-        # ── Center: canvas + element list + preview ──
+        # ── Center: canvas + element list ──
         center = QWidget()
         cl = QVBoxLayout(center)
         cl.addWidget(QLabel(_("Canvas")))
         cl.addWidget(self._canvas, stretch=1)
         cl.addWidget(self._elem_list, stretch=0)
-        cl.addWidget(QLabel(_("Live Preview")))
-        cl.addWidget(self._preview, stretch=0)
         splitter.addWidget(center)
 
         # ── Right: properties ──
@@ -1004,6 +999,7 @@ class ConfigWindow(QMainWindow):
         self._r_rotative.toggled.connect(self._on_mode_radio)
         self._r_reactive.toggled.connect(self._on_mode_radio)
         self._btn_apply_mode.clicked.connect(self._apply_mode)
+        self._btn_pause_mode.clicked.connect(self._toggle_mode_pause)
         self._btn_add_rule.clicked.connect(self._add_reactive_rule)
         self._btn_del_rule.clicked.connect(self._del_reactive_rule)
 
@@ -1028,7 +1024,7 @@ class ConfigWindow(QMainWindow):
         self._combo_rotation.blockSignals(True)
         self._combo_rotation.setCurrentIndex(rot_map.get(layout.rotation, 2))
         self._combo_rotation.blockSignals(False)
-        self._adjust_preview_timer()
+        self._adjust_canvas_timer()
         self._load_mode_ui()
         self._dirty = False
         self._update_title()
@@ -1107,8 +1103,10 @@ class ConfigWindow(QMainWindow):
     def _on_mode_radio(self, checked: bool):
         if not checked:
             return
+        is_non_static = not self._r_static.isChecked()
         self._w_rotative.setVisible(self._r_rotative.isChecked())
         self._w_reactive.setVisible(self._r_reactive.isChecked())
+        self._btn_pause_mode.setVisible(is_non_static)
 
     def _apply_mode(self):
         """Build ModeConfig from UI and apply it."""
@@ -1153,6 +1151,24 @@ class ConfigWindow(QMainWindow):
         )
         self.daemon.config.save_mode_config(mc)
         self.daemon.mode_controller.reload()
+        self._sync_pause_button()
+
+    def _toggle_mode_pause(self) -> None:
+        """Toggle mode controller pause from the UI button."""
+        mc = self.daemon.mode_controller
+        if mc._paused:
+            mc.resume()
+        else:
+            mc.pause()
+        self._sync_pause_button()
+
+    def _sync_pause_button(self) -> None:
+        """Sync pause button text/state with mode controller."""
+        paused = self.daemon.mode_controller._paused
+        self._btn_pause_mode.setChecked(paused)
+        self._btn_pause_mode.setText(
+            _("Resume Mode") if paused else _("Pause Mode")
+        )
 
     def _add_reactive_rule(self):
         """Add a new process → layout rule via input dialogs."""
@@ -1192,6 +1208,8 @@ class ConfigWindow(QMainWindow):
         ).setChecked(True)
         self._w_rotative.setVisible(mc.mode == "rotative")
         self._w_reactive.setVisible(mc.mode == "reactive")
+        self._btn_pause_mode.setVisible(mc.mode != "static")
+        self._sync_pause_button()
 
         # Rotative: check layouts
         rot_set = set(mc.rotative.layouts)
@@ -1311,7 +1329,7 @@ class ConfigWindow(QMainWindow):
         )
         self._scene.add_element(el)
 
-    # ── Live preview ──
+    # ── Canvas rendering ──
 
     def _on_element_changed(self, element) -> None:
         """Element property edited in panel — refresh visual."""
@@ -1320,36 +1338,19 @@ class ConfigWindow(QMainWindow):
         self._tick_canvas_render()
 
     def _on_background_changed(self, bg) -> None:
-        """Handle background change: update scene and adjust preview speed."""
+        """Handle background change: update scene and adjust canvas speed."""
         self._scene.set_background(bg)
-        self._adjust_preview_timer()
+        self._adjust_canvas_timer()
         self._mark_dirty()
         self._tick_canvas_render()
 
-    def _adjust_preview_timer(self) -> None:
-        """Adjust preview and canvas timer speed based on background type."""
+    def _adjust_canvas_timer(self) -> None:
+        """Adjust canvas timer speed based on background type."""
         layout = self.daemon.config.active_layout
         if layout.background.type == "video" and layout.background.path:
-            self._timer.setInterval(100)  # ~10 FPS — smooth enough for preview
             self._canvas_timer.setInterval(100)
         else:
-            self._timer.setInterval(2000)  # 0.5 FPS for static backgrounds
             self._canvas_timer.setInterval(200)
-
-    def _tick_preview(self):
-        try:
-            layout = self.daemon.config.active_layout
-            # Use cached sensor values from the render thread when available,
-            # avoiding a full sensor read (PDH+pynvml+psutil) every tick.
-            rt = self.daemon._render_thread
-            if rt is not None and rt._cached_values:
-                values = rt._cached_values
-            else:
-                values = self.daemon.sensors.read_all()
-            img = self.daemon.renderer.render_image(layout, values)
-            self._preview.update_from_pil(img)
-        except Exception:
-            pass
 
     def _tick_canvas_render(self) -> None:
         """Render the full scene and update the canvas bitmap."""

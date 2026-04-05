@@ -282,10 +282,10 @@ class Renderer:
     def render_image(
         self, layout: Layout, sensor_values: dict[str, SensorReading]
     ) -> Image.Image:
-        """Full compose into a PIL Image (for editor preview).
+        """Full compose into a PIL Image (for editor canvas).
 
-        This is the legacy all-in-one path — fine for the preview widget
-        which runs at ~10 FPS.  NOT used in the device render loop.
+        This is the all-in-one path used by the editor canvas timer
+        which runs at ~5-10 FPS.  NOT used in the device render loop.
         """
         bg = self._get_background(layout).copy()
         draw = ImageDraw.Draw(bg)

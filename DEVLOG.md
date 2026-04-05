@@ -1343,3 +1343,80 @@ ConfigWindow._canvas_timer (200ms static / 100ms video)
 35. `_pil_to_qpixmap()` usa BGRA raw + `.copy()` — nunca JPEG roundtrip para el canvas (pérdida de calidad).
 36. Lock rejection en `ItemPositionChange` (antes del movimiento), no en `ItemPositionHasChanged` (ya movido).
 37. Canvas timer se para en `closeEvent()` y rearranca en `showEvent()` para no consumir recursos en segundo plano.
+
+---
+
+## Sesion 9 — Eliminar Live Preview + Botón Pause Mode en UI (2026-04-05)
+
+### Problema
+1. **Live Preview redundante**: El canvas del editor ya muestra el render real PIL (sesión 8). El widget "Live Preview" debajo del canvas era una duplicación exacta que consumía recursos extra (otro timer + otra llamada a `render_image()` + conversión JPEG).
+2. **Pause Mode inaccesible**: "Pause Mode" (pausar auto-switching de layouts en modo rotativo/reactivo) solo estaba disponible en el menú contextual del tray. El usuario tenía que abandonar la ventana principal para acceder a esta funcionalidad.
+3. **Confusión "Pause" vs "Pause Mode"**: Dos opciones en el menú tray con nombres similares pero funciones distintas.
+
+### Análisis de las dos funciones "Pause"
+
+| | **Pause** (tray) | **Pause Mode** (tray + UI) |
+|---|---|---|
+| **Qué hace** | Para TODO: render thread + mode controller | Solo para auto-switching de layouts |
+| **Rendering** | Se detiene completamente | Sigue activo (sensores se actualizan) |
+| **Pantalla** | Se congela en último frame | Sigue viva con el layout actual |
+| **Cuándo usar** | Apagar temporalmente el dispositivo | Editar tranquilamente sin que el modo cambie el layout |
+| **API** | `daemon.stop_render()` / `start_render()` | `mode_controller.pause()` / `resume()` |
+| **Estado** | `daemon.is_running` | `mode_controller._paused` |
+
+**Conclusión**: Ambas funciones son correctas y distintas. "Pause" = apagar dispositivo, "Pause Mode" = congelar auto-switching. Ambas se mantienen en el tray, y "Pause Mode" se añade también a la UI principal.
+
+### Solución
+
+#### Eliminar Live Preview
+- Borrar `self._preview = PreviewWidget()`, `self._timer` (preview timer), `_tick_preview()`, widget QLabel("Live Preview")
+- Renombrar `_adjust_preview_timer()` → `_adjust_canvas_timer()` (solo gestiona canvas timer)
+- Eliminar import de `PreviewWidget`
+- `preview.py` queda huérfano (no se borra del repo para mantener historial limpio, pero no se usa)
+
+#### Añadir botón Pause Mode en UI
+- `QPushButton("Pause Mode")` checkable, junto al botón "Apply Mode"
+- Visible solo en modo rotative/reactive (igual que en el tray)
+- Toggle: `mode_controller.pause()` / `resume()`, sync texto "Pause Mode" ↔ "Resume Mode"
+- `_sync_pause_button()` sincroniza estado del botón con `mode_controller._paused`
+- Se llama en: toggle click, apply mode (reload resetea paused), load mode UI
+
+### Cambios
+
+#### `ui/main_window.py`
+
+**Eliminado:**
+- Import `from .preview import PreviewWidget`
+- `self._preview = PreviewWidget()`
+- `self._timer` (preview QTimer) y su conexión/start
+- QLabel("Live Preview") + `self._preview` en el layout central
+- `_tick_preview()` método completo
+- Referencias a `self._timer.setInterval()` en `_adjust_preview_timer`
+
+**Renombrado:**
+- `_adjust_preview_timer()` → `_adjust_canvas_timer()` (3 ocurrencias)
+
+**Añadido:**
+- `self._btn_pause_mode` — QPushButton checkable
+- `_toggle_mode_pause()` — toggle pause/resume en mode controller
+- `_sync_pause_button()` — sync texto y estado checked del botón
+- `_on_mode_radio()` actualizado: muestra/oculta `_btn_pause_mode`
+- `_load_mode_ui()` actualizado: sync visibilidad y estado pause
+- `_apply_mode()` actualizado: llama `_sync_pause_button()` (reload resetea paused)
+
+**Comentarios actualizados:**
+- Docstring del módulo: eliminar referencia a "live preview"
+- Sección "Live preview" → "Canvas rendering"
+- `_on_background_changed` docstring actualizado
+
+#### `renderer.py`
+- Comentario de `render_image()` actualizado: "preview widget" → "editor canvas"
+
+### Auditoria Linux
+
+**Sin impacto.** Solo se eliminó código Qt y se añadió un botón Qt.
+
+### Reglas nuevas del bucle
+38. No duplicar renders: un solo timer de canvas es suficiente. Si el canvas muestra el render real, no hay necesidad de un widget preview separado.
+39. "Pause" (tray) = detener render thread completo. "Pause Mode" (tray + UI) = pausar solo auto-switching. Son funciones distintas, ambas necesarias.
+40. El botón Pause Mode en la UI debe ser checkable y sincronizarse con `mode_controller._paused` — incluyendo cuando Apply Mode hace `reload()` (que resetea paused).
