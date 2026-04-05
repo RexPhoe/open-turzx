@@ -779,9 +779,8 @@ class PropertiesPanel(QScrollArea):
             filters = f"{vid_filter};;{img_filter};;All (*)"
         else:
             filters = f"{img_filter};;{vid_filter};;All (*)"
-        p, _ = QFileDialog.getOpenFileName(
-            self, _("Select Background"), "", filters,
-        )
+        title = _("Select Background")
+        p, _filt = QFileDialog.getOpenFileName(self, title, "", filters)
         if p:
             ext = p.rsplit(".", 1)[-1].lower() if "." in p else ""
             if ext in ("mp4", "avi", "mkv", "mov", "webm"):
