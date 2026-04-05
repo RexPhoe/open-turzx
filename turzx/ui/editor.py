@@ -57,11 +57,9 @@ class ElementItem(QGraphicsItem):
         self._pixmap: QPixmap | None = None
 
         self.setFlags(
-            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-            | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
-        self.setCursor(Qt.CursorShape.SizeAllCursor)
         self.refresh()
 
     # ── helpers ──
@@ -130,6 +128,20 @@ class ElementItem(QGraphicsItem):
             h = self.element.h or 80
             self._bounds = QRectF(0, 0, w, h)
 
+        # Sync movable flag and cursor based on lock state
+        locked = getattr(self.element, "locked", False)
+        flags = (
+            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        if not locked:
+            flags |= QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+        self.setFlags(flags)
+        self.setCursor(
+            Qt.CursorShape.ForbiddenCursor if locked
+            else Qt.CursorShape.SizeAllCursor
+        )
+
         self.setPos(self.element.x, self.element.y)
         self.setZValue(self.element.z)
         self.update()
@@ -140,107 +152,22 @@ class ElementItem(QGraphicsItem):
     # ── painting ──
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        if self.element.type in ("text", "sensor"):
-            painter.setFont(self._font())
-            painter.setPen(QColor(*self.element.color))
-            painter.drawText(
-                self._text_rect,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
-                self.display_text(),
-            )
-
-        elif self.element.type == "image":
-            if self._pixmap and not self._pixmap.isNull():
-                scaled = self._pixmap.scaled(
-                    self._bounds.size().toSize(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-                painter.drawPixmap(0, 0, scaled)
-            else:
-                painter.setPen(QPen(QColor(100, 100, 100), 1, Qt.PenStyle.DashLine))
-                painter.drawRect(self._bounds)
-                painter.setPen(QColor(120, 120, 120))
-                painter.drawText(self._bounds, Qt.AlignmentFlag.AlignCenter, "(image)")
-
-        elif self.element.type == "shape":
-            fc = self.element.fill_color
-            fa = self.element.fill_alpha
-            fill = QColor(fc[0], fc[1], fc[2], fa)
-            painter.setBrush(QBrush(fill))
-            sw = self.element.stroke_width
-            if sw > 0:
-                sc = self.element.stroke_color
-                painter.setPen(QPen(QColor(*sc), sw))
-            else:
-                painter.setPen(Qt.PenStyle.NoPen)
-            shape = self.element.shape
-            r = self._bounds
-            if shape == "rect":
-                painter.drawRect(r)
-            elif shape == "circle":
-                s = min(r.width(), r.height())
-                painter.drawEllipse(r.center(), s / 2, s / 2)
-            elif shape == "ellipse":
-                painter.drawEllipse(r)
-            elif shape == "line":
-                painter.setPen(QPen(fill, max(sw, 2)))
-                painter.drawLine(r.topLeft(), r.bottomRight())
-
-        elif self.element.type == "bar":
-            bg_c = self.element.bar_bg_color
-            fg_c = self.element.bar_fg_color
-            r = self._bounds
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(*bg_c)))
-            painter.drawRect(r)
-            # Show ~50% fill as preview
-            direction = getattr(self.element, 'bar_direction', 'right') or 'right'
-            if direction == "right":
-                fg_rect = QRectF(r.x(), r.y(), r.width() * 0.5, r.height())
-            elif direction == "left":
-                fg_rect = QRectF(r.x() + r.width() * 0.5, r.y(), r.width() * 0.5, r.height())
-            elif direction == "down":
-                fg_rect = QRectF(r.x(), r.y(), r.width(), r.height() * 0.5)
-            else:  # up
-                fg_rect = QRectF(r.x(), r.y() + r.height() * 0.5, r.width(), r.height() * 0.5)
-            painter.setBrush(QBrush(QColor(*fg_c)))
-            painter.drawRect(fg_rect)
-
-        elif self.element.type == "arc_bar":
-            from PySide6.QtCore import QRect
-            bg_c = self.element.bar_bg_color
-            fg_c = self.element.bar_fg_color
-            thickness = self.element.bar_thickness
-            r = self._bounds.toRect()
-            pen_bg = QPen(QColor(*bg_c), thickness, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-            pen_fg = QPen(QColor(*fg_c), thickness, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-            # Shrink rect by thickness so arc fits
-            inset = thickness // 2 + 1
-            arc_r = r.adjusted(inset, inset, -inset, -inset)
-            # Qt drawArc: angles in 1/16°, counter-clockwise from 3 o'clock
-            # PIL draw.arc: clockwise from 3 o'clock
-            # Convert PIL convention → Qt convention: negate angles
-            start = -self.element.bar_start_angle * 16
-            sweep = -self.element.bar_sweep_angle * 16
-            painter.setPen(pen_bg)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawArc(arc_r, start, sweep)
-            # ~50% fill preview
-            painter.setPen(pen_fg)
-            painter.drawArc(arc_r, start, int(sweep * 0.5))
-
-        # selection highlight
+        # Real-render mode: the rendered bitmap shows all content.
+        # Only draw the selection indicator.
         if self.isSelected():
-            painter.setPen(QPen(QColor(0, 170, 255), 1.5, Qt.PenStyle.DashLine))
-            painter.setBrush(QBrush(QColor(0, 170, 255, 25)))
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            locked = getattr(self.element, "locked", False)
+            color = QColor(255, 80, 80) if locked else QColor(0, 170, 255)
+            painter.setPen(QPen(color, 1.5, Qt.PenStyle.DashLine))
+            painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 25)))
             painter.drawRect(self._bounds)
 
     # ── interaction ──
 
     def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            if getattr(self.element, "locked", False):
+                return self.pos()
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             self.element.x = int(value.x())
             self.element.y = int(value.y())
@@ -271,6 +198,15 @@ def _cv2_frame_to_pixmap(frame) -> QPixmap | None:
     except Exception as e:
         _log(f"frame_to_pixmap error: {e}")
         return None
+
+
+def _pil_to_qpixmap(pil_image) -> QPixmap:
+    """Convert a PIL Image (RGB/RGBA) to QPixmap without JPEG roundtrip."""
+    if pil_image.mode != "RGBA":
+        pil_image = pil_image.convert("RGBA")
+    data = pil_image.tobytes("raw", "BGRA")
+    qimg = QImage(data, pil_image.width, pil_image.height, QImage.Format.Format_ARGB32)
+    return QPixmap.fromImage(qimg.copy())
 
 
 # ── Video background player ───────────────────────────────────
@@ -381,6 +317,7 @@ class EditorScene(QGraphicsScene):
         self.setSceneRect(0, 0, SCREEN_W, SCREEN_H)
         self._layout: Layout | None = None
         self._bg_item: QGraphicsPixmapItem | None = None
+        self._render_bg: QGraphicsPixmapItem | None = None
         self._items: list[ElementItem] = []
 
         # Video background player + timer
@@ -402,6 +339,7 @@ class EditorScene(QGraphicsScene):
         self.clear()
         self._items.clear()
         self._bg_item = None
+        self._render_bg = None
 
         self._apply_background()
         for el in layout.elements:
@@ -540,6 +478,15 @@ class EditorScene(QGraphicsScene):
             self._apply_background()
             self.layout_modified.emit()
 
+    def update_render_pixmap(self, pixmap: QPixmap) -> None:
+        """Replace the full-scene rendered bitmap (from Renderer)."""
+        if self._render_bg is None:
+            self._render_bg = QGraphicsPixmapItem(pixmap)
+            self._render_bg.setZValue(-9999)
+            self.addItem(self._render_bg)
+        else:
+            self._render_bg.setPixmap(pixmap)
+
     # ── refresh ──
 
     def refresh_all(self) -> None:
@@ -656,6 +603,7 @@ class ElementListPanel(QWidget):
 
         # Connect signals
         self._list.currentRowChanged.connect(self._on_row_changed)
+        self._list.itemChanged.connect(self._on_item_changed)
         scene.element_selected.connect(self._on_scene_selection)
         scene.layout_modified.connect(self.refresh)
 
@@ -674,8 +622,14 @@ class ElementListPanel(QWidget):
         new_row = -1
         for i, el in enumerate(elements):
             name = _element_display_name(el)
-            item = QListWidgetItem(f"[z={el.z}] {name}")
+            locked = getattr(el, "locked", False)
+            lock_icon = "\U0001f512 " if locked else ""
+            item = QListWidgetItem(f"[z={el.z}] {lock_icon}{name}")
             item.setData(Qt.ItemDataRole.UserRole, id(el))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if locked else Qt.CheckState.Unchecked
+            )
             self._list.addItem(item)
             if el is current_el:
                 new_row = i
@@ -693,6 +647,25 @@ class ElementListPanel(QWidget):
             self._scene.select_element(elements[row])
         else:
             self._scene.select_element(None)
+
+    def _on_item_changed(self, item: QListWidgetItem) -> None:
+        """Handle checkbox toggle to lock/unlock an element."""
+        if self._updating:
+            return
+        row = self._list.row(item)
+        elements = self._scene.get_elements()
+        if 0 <= row < len(elements):
+            el = elements[row]
+            locked = item.checkState() == Qt.CheckState.Checked
+            el.locked = locked
+            self._scene.refresh_item(el)
+            # Update list text to show/hide lock icon
+            self._updating = True
+            name = _element_display_name(el)
+            lock_icon = "\U0001f512 " if locked else ""
+            item.setText(f"[z={el.z}] {lock_icon}{name}")
+            self._updating = False
+            self._scene.layout_modified.emit()
 
     def _on_scene_selection(self, element) -> None:
         """Scene selection changed — sync list highlight."""

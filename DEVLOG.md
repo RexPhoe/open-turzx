@@ -1259,3 +1259,87 @@ El motor opera a nivel de frames PIL completos (overlay + background ya compuest
 31. Las transiciones deben operar sobre frames PIL completos (post-compose) — nunca sobre capas individuales, para evitar desincronización fondo/texto.
 32. `_start_transition()` captura el frame ANTES del cambio — si no hay frame previo, salta la transición silenciosamente.
 33. Transiciones solo aplican en modos no-estáticos — en static, el usuario cambia manualmente y espera resultado inmediato.
+
+---
+
+## Sesion 8 — Real-Render Canvas + Layer Locking (2026-04-05)
+
+### Problema
+El canvas del editor dibujaba elementos con primitivas Qt (QFont, QPen, etc.) que no coincidían con el resultado real en la pantalla USB: sensores mostraban valores hardcodeados ("42.0%"), las fuentes no coincidían con PIL, los gradientes eran aproximados. Además, era fácil mover accidentalmente elementos durante la edición.
+
+### Solución — Bitmap renderizado + Proxies transparentes + Bloqueo de capas
+
+**Canvas real-render:**
+Reemplazar el dibujo Qt por-elemento con un bitmap de `Renderer.render_image()` — la misma función que genera frames para la pantalla USB. Un `QGraphicsPixmapItem` a z=-9999 muestra el resultado real. Los `ElementItem` se vuelven proxies transparentes (solo dibujan selección).
+
+**Layer locking:**
+Checkbox en el panel de elementos para bloquear/desbloquear capas. Elementos bloqueados no se pueden arrastrar (cursor prohibido, rechazo de movimiento).
+
+```
+ConfigWindow._canvas_timer (200ms static / 100ms video)
+    │
+    ├── renderer.render_image(layout, sensor_values) → PIL Image
+    ├── _pil_to_qpixmap(pil_img) → QPixmap (BGRA raw, sin JPEG)
+    └── scene.update_render_pixmap(pixmap) → _render_bg at z=-9999
+        └── ElementItems: transparentes, solo rect de selección
+            ├── Deseleccionado: invisible
+            ├── Seleccionado: rect cyan discontinuo
+            └── Seleccionado+Locked: rect rojo discontinuo
+```
+
+### Cambios
+
+#### `config.py`
+- `LayoutElement`: +`locked: bool = False` — persiste en JSON, layouts viejos default `False`
+- Layout version: 6
+
+#### `editor.py` — Render bitmap + transparent proxy + lock
+
+**`_pil_to_qpixmap(pil_image)`** — Helper PIL→QPixmap:
+- Convierte a RGBA, `tobytes("raw", "BGRA")` → `QImage(Format_ARGB32)` → `.copy()` para seguridad de memoria
+- Sin roundtrip JPEG — píxel-perfecto
+
+**`EditorScene`:**
+- `_render_bg: QGraphicsPixmapItem | None` — bitmap renderizado a z=-9999
+- `update_render_pixmap(pixmap)` — crea o actualiza el bitmap
+- `load_layout()` limpia `_render_bg`
+
+**`ElementItem.paint()`** — Proxy transparente:
+- No dibuja nada excepto rect de selección cuando `isSelected()`
+- Color: cyan para normal, rojo para locked. Borde discontinuo + fill semi-transparente
+
+**`ElementItem.itemChange()`** — Rechazo de drag:
+- `ItemPositionChange`: si `locked`, retorna `self.pos()` (posición actual = sin movimiento)
+- `ItemPositionHasChanged`: sincroniza x,y normalmente para elementos desbloqueados
+
+**`ElementItem.refresh()`** — Sync de flags:
+- Locked: `ItemIsSelectable | ItemSendsGeometryChanges`, cursor `ForbiddenCursor`
+- Unlocked: + `ItemIsMovable`, cursor `SizeAllCursor`
+
+**`ElementListPanel`** — Checkboxes de bloqueo:
+- Items con `ItemIsUserCheckable`, checked = locked
+- Prefijo `🔒` en el nombre del elemento cuando está bloqueado
+- `_on_item_changed()`: actualiza `el.locked`, refresca flags, emite `layout_modified`
+
+#### `ui/main_window.py` — Timer de canvas
+
+- `_canvas_timer`: QTimer 200ms (static) / 100ms (video)
+- `_tick_canvas_render()`: render_image → _pil_to_qpixmap → scene.update_render_pixmap
+- Sensor values: del cache de RenderThread o fallback a `sensors.read_all()`
+- Re-render inmediato en: property change, background change, layout_modified (drag end)
+- `showEvent()`: arranca canvas timer
+- `closeEvent()`: para canvas timer
+- `_on_layout_modified()`: combina `_mark_dirty()` + `_tick_canvas_render()`
+- `_adjust_preview_timer()`: también ajusta canvas timer interval
+
+### Auditoria Linux
+
+**Real-render canvas: 100% compatible.** Usa `Renderer.render_image()` (PIL puro) → QPixmap via QImage. Sin dependencias de plataforma.
+
+**Lock system: 100% compatible.** Solo flags de Qt y atributos de dataclass.
+
+### Reglas nuevas del bucle
+34. El canvas del editor debe usar `render_image()` — NUNCA dibujar con Qt primitivas. Un solo bitmap a z=-9999 como fondo, ElementItems como proxies transparentes.
+35. `_pil_to_qpixmap()` usa BGRA raw + `.copy()` — nunca JPEG roundtrip para el canvas (pérdida de calidad).
+36. Lock rejection en `ItemPositionChange` (antes del movimiento), no en `ItemPositionHasChanged` (ya movido).
+37. Canvas timer se para en `closeEvent()` y rearranca en `showEvent()` para no consumir recursos en segundo plano.

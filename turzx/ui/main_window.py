@@ -776,6 +776,11 @@ class ConfigWindow(QMainWindow):
         self._timer.timeout.connect(self._tick_preview)
         self._timer.start(2000)
 
+        # Canvas render timer — updates editor canvas with real rendered output
+        self._canvas_timer = QTimer(self)
+        self._canvas_timer.timeout.connect(self._tick_canvas_render)
+        self._canvas_timer.start(200)
+
         self._load_layout()
 
     # ── UI construction ──
@@ -988,7 +993,7 @@ class ConfigWindow(QMainWindow):
 
         # scene ↔ properties
         self._scene.element_selected.connect(self._props.set_element)
-        self._scene.layout_modified.connect(self._mark_dirty)
+        self._scene.layout_modified.connect(self._on_layout_modified)
         self._props.property_changed.connect(self._on_element_changed)
         self._props.background_changed.connect(self._on_background_changed)
         self._props.delete_requested.connect(self._scene.remove_selected)
@@ -1312,27 +1317,24 @@ class ConfigWindow(QMainWindow):
         """Element property edited in panel — refresh visual."""
         self._scene.refresh_item(element)
         self._mark_dirty()
+        self._tick_canvas_render()
 
     def _on_background_changed(self, bg) -> None:
         """Handle background change: update scene and adjust preview speed."""
         self._scene.set_background(bg)
         self._adjust_preview_timer()
         self._mark_dirty()
+        self._tick_canvas_render()
 
     def _adjust_preview_timer(self) -> None:
-        """Adjust preview timer speed.
-
-        Preview is a visual aid — it doesn't need full screen_fps.
-        Cap at ~10 FPS for video (enough to see motion), 0.5 FPS for static.
-        Running heavier (sensor reads + full render + renderer's VideoCapture)
-        at 60 FPS in the main thread would freeze the UI and race with the
-        daemon's RenderThread over the same cv2.VideoCapture.
-        """
+        """Adjust preview and canvas timer speed based on background type."""
         layout = self.daemon.config.active_layout
         if layout.background.type == "video" and layout.background.path:
             self._timer.setInterval(100)  # ~10 FPS — smooth enough for preview
+            self._canvas_timer.setInterval(100)
         else:
             self._timer.setInterval(2000)  # 0.5 FPS for static backgrounds
+            self._canvas_timer.setInterval(200)
 
     def _tick_preview(self):
         try:
@@ -1349,12 +1351,37 @@ class ConfigWindow(QMainWindow):
         except Exception:
             pass
 
+    def _tick_canvas_render(self) -> None:
+        """Render the full scene and update the canvas bitmap."""
+        if not self.isVisible():
+            return
+        try:
+            layout = self.daemon.config.active_layout
+            rt = self.daemon._render_thread
+            if rt is not None and rt._cached_values:
+                values = rt._cached_values
+            else:
+                values = self.daemon.sensors.read_all()
+            img = self.daemon.renderer.render_image(layout, values)
+            from .editor import _pil_to_qpixmap
+            pixmap = _pil_to_qpixmap(img)
+            self._scene.update_render_pixmap(pixmap)
+        except Exception:
+            pass
+
+    def _on_layout_modified(self) -> None:
+        """Layout structure changed (drag, add, remove) — mark dirty + re-render."""
+        self._mark_dirty()
+        self._tick_canvas_render()
+
     # ── Window lifecycle ──
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._canvas_timer.start()
 
     def closeEvent(self, event):
+        self._canvas_timer.stop()
         if self._dirty:
             reply = QMessageBox.question(
                 self, _("Unsaved Changes"),

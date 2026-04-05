@@ -89,6 +89,8 @@ class LayoutElement:
     bar_direction: str = "right"  # "right", "left", "down", "up"
     bar_start_angle: int = 135  # start angle for arc (degrees, 0=right, CCW)
     bar_sweep_angle: int = 270  # total arc sweep (degrees)
+    # lock
+    locked: bool = False  # if True, element cannot be dragged in editor
 
     def to_dict(self) -> dict:
         return asdict(self)
