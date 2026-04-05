@@ -68,7 +68,13 @@ class ModeController(QObject):
         self._apply_mode()
 
     def reload(self) -> None:
-        """Re-read mode config and restart timers."""
+        """Re-read mode config and restart timers.
+
+        Called from the editor's "Apply Mode" button — this is an explicit
+        user action, so it must unpause and force-start the timers even if
+        the editor is still open.
+        """
+        self._paused = False
         self.stop()
         self._apply_mode()
 
@@ -96,16 +102,21 @@ class ModeController(QObject):
         available = self._config.list_layouts()
         # Filter rotation list to only existing layouts
         pool = [name for name in mc.rotative.layouts if name in available]
-        if not pool:
+        if len(pool) < 2:
             return
 
+        # Always advance to a *different* layout
         self._rotate_idx = self._rotate_idx % len(pool)
         target = pool[self._rotate_idx]
         self._rotate_idx = (self._rotate_idx + 1) % len(pool)
 
-        if target != self._config.active_name:
-            self._config.set_active(target)
-            self.layout_switched.emit(target)
+        # If by chance we landed on the current layout, skip to next
+        if target == self._config.active_name:
+            target = pool[self._rotate_idx]
+            self._rotate_idx = (self._rotate_idx + 1) % len(pool)
+
+        self._config.set_active(target)
+        self.layout_switched.emit(target)
 
     def _on_react(self) -> None:
         """Check foreground app and switch layout if a rule matches."""

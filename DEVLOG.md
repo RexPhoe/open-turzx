@@ -1127,5 +1127,48 @@ ModeController se pausa cuando el editor tiene cambios sin guardar (`_dirty`).
 
 ### Reglas nuevas del bucle
 24. ModeController vive en main thread (QTimers) — render thread no necesita cambios porque ya polls `config.active_layout`.
-25. Siempre pausar mode controller cuando editor tiene cambios sin guardar — evita conflictos de layout switch.
+25. El editor NO debe pausar el mode controller al abrirse — los modos corren libre, el editor sincroniza solo cuando no hay cambios sin guardar.
+26. `reload()` es accion explicita del usuario (Apply Mode) — DEBE desactivar `_paused` antes de arrancar timers.
+27. Rotacion con pool < 2 layouts no tiene sentido — skip silencioso. Con pool >= 2, siempre avanzar a layout diferente del activo.
+
+---
+
+## Sesion 6 — Mode controller bug fixes + CPU temp MAHM (2026-04-05)
+
+### Bugs encontrados y corregidos
+
+#### Bug 1: Rotativo nunca cambiaba de layout
+**Causa raiz**: `showEvent` del editor pausaba el ModeController cada vez que la ventana se mostraba. Cuando el usuario clicaba "Apply Mode", `reload()` llamaba `_apply_mode()` que comprobaba `if self._paused: return` y salía sin arrancar timers.
+
+**Fix**:
+- `reload()` ahora hace `self._paused = False` antes de arrancar timers (es acción explícita del usuario)
+- Eliminado `pause()` de `showEvent` — el editor ya no pausa el mode controller al abrirse
+- Eliminado `resume()` de `closeEvent` — coherente con el cambio anterior
+
+#### Bug 2: Rotativo se saltaba turnos
+**Causa raiz**: `_on_rotate()` cogía `pool[idx]` y luego comprobaba `if target != active_name`. Si idx coincidía con el layout activo, ese tick entero se perdía sin avanzar.
+
+**Fix**: Si el target coincide con el layout activo, avanza al siguiente inmediatamente. También requiere `len(pool) >= 2` — rotar con un solo layout no tiene sentido.
+
+#### Bug 3: Reactivo inconsistente
+**Causa raiz**: Mismo que Bug 1 — el `_paused` flag impedía arrancar el timer reactivo después de aplicar el modo desde el editor.
+
+### Cambios
+
+#### `modes.py`
+- `reload()`: añadido `self._paused = False` — acción explícita no debe respetar pausa
+- `_on_rotate()`: requiere pool >= 2; skip automático si target == active; siempre emite `layout_switched`
+
+#### `ui/main_window.py`
+- `showEvent`: eliminado `mode_controller.pause()` — el editor no interfiere con los modos
+- `closeEvent`: eliminado `mode_controller.resume()` — coherente con showEvent
+
+#### `sensors/cpu.py` (sesión anterior, documentado aquí)
+- Reemplazado `_wmi_cpu_temp()` (wmic, roto en Win11) por `_mahm_cpu_temp()` — lee MAHMSharedMemory directamente
+- Entry layout MAHM v2: 5×char[260] + float data@+1300 + float min@+1304 + float max@+1308
+
+### Reglas nuevas del bucle
+28. wmic está deprecado/eliminado en Win11 24H2+ — usar PowerShell CIM o shared memory directamente.
+29. MAHM shared memory v2: entry_size=1324, datos reales en offset +1300 (no +780 como sugeriría el struct naive).
+30. El editor y el mode controller son sistemas independientes — el editor no debe pausar/reanudar modos. Solo sincroniza UI via signal `layout_switched` cuando no hay edits pendientes.
 24. Sensores real-time (clock/date) deben excluirse del cache de overlay y dibujarse per-frame.

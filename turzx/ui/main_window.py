@@ -1305,8 +1305,6 @@ class ConfigWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # Pause mode auto-switching while the editor is open
-        self.daemon.mode_controller.pause()
 
     def closeEvent(self, event):
         if self._dirty:
@@ -1323,7 +1321,5 @@ class ConfigWindow(QMainWindow):
             else:
                 # User discarded changes
                 self._dirty = False
-        # Resume mode controller when editor closes
-        self.daemon.mode_controller.resume()
         event.ignore()
         self.hide()
