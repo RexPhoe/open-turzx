@@ -22,7 +22,7 @@ import threading
 import time
 from datetime import datetime
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 from .config import Layout, LayoutElement
 from .images import to_jpeg
@@ -59,6 +59,7 @@ def _find_font_file(family: str) -> str | None:
     if sys.platform == "win32":
         try:
             import winreg
+
             fonts_dir = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
             key = winreg.OpenKey(
                 winreg.HKEY_LOCAL_MACHINE,
@@ -87,9 +88,12 @@ def _find_font_file(family: str) -> str | None:
         # Linux: fc-match
         try:
             import subprocess
+
             result = subprocess.run(
                 ["fc-match", "--format=%{file}", family],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True,
+                text=True,
+                timeout=2,
             )
             if result.returncode == 0 and result.stdout.strip():
                 path = result.stdout.strip()
@@ -178,9 +182,8 @@ def _make_gradient(
 
 
 class Renderer:
-    # Video frames advance at this rate regardless of render loop speed.
-    # Prevents 24fps videos from playing 2.5x too fast at 60fps render.
-    VIDEO_FPS_CAP = 24
+    # Maximum video advance rate (fps) used as fallback when native fps is unknown.
+    VIDEO_FPS_CAP = 60
 
     def __init__(self, width: int = SCREEN_W, height: int = SCREEN_H) -> None:
         self.width = width
@@ -192,6 +195,7 @@ class Renderer:
         self._video_lock = threading.Lock()
         self._video_frame: Image.Image | None = None  # cached last frame
         self._video_frame_time: float = 0.0  # when we last advanced
+        self._video_native_fps: float = 0.0  # native fps read from the file
 
         # Cached overlay — rebuilt only at sensor_rate
         self._overlay: Image.Image | None = None
@@ -237,7 +241,8 @@ class Renderer:
 
         # Cache which elements need per-frame rendering
         self._realtime_elements = [
-            el for el in layout.elements
+            el
+            for el in layout.elements
             if el.type == "sensor" and el.sensor_id in self._REALTIME_SENSORS
         ]
         self._overlay = overlay
@@ -272,12 +277,24 @@ class Renderer:
                 else:
                     continue
                 try:
-                    text = el.format.format(label=el.label or el.sensor_id, value=val, unit="")
+                    text = el.format.format(
+                        label=el.label or el.sensor_id, value=val, unit=""
+                    )
                 except (KeyError, ValueError):
                     text = val
                 self._render_text_on(bg, draw, text, el)
 
-        return bg
+        return self._apply_image_adjustments(bg, layout)
+
+    def _apply_image_adjustments(self, img: Image.Image, layout: Layout) -> Image.Image:
+        """Apply brightness and contrast multipliers (1.0 = unchanged)."""
+        b = layout.brightness
+        c = layout.contrast
+        if b != 1.0:
+            img = ImageEnhance.Brightness(img).enhance(b)
+        if c != 1.0:
+            img = ImageEnhance.Contrast(img).enhance(c)
+        return img
 
     def render_image(
         self, layout: Layout, sensor_values: dict[str, SensorReading]
@@ -304,7 +321,12 @@ class Renderer:
             elif element.type == "arc_bar":
                 self._draw_arc_bar(bg, draw, element, sensor_values)
 
-        return bg
+        return self._apply_image_adjustments(bg, layout)
+
+    @property
+    def video_native_fps(self) -> float:
+        """Last video's native fps as reported by the container (0 if unknown)."""
+        return self._video_native_fps
 
     def cleanup(self) -> None:
         """Release video resources."""
@@ -394,7 +416,6 @@ class Renderer:
             return None
 
         now = time.monotonic()
-        frame_interval = 1.0 / self.VIDEO_FPS_CAP
 
         with self._video_lock:
             try:
@@ -408,12 +429,27 @@ class Renderer:
                     self._video_path = path
                     self._video_frame = None
                     self._video_frame_time = 0.0
+                    # Read native fps from the container
+                    native = self._video_cap.get(cv2.CAP_PROP_FPS)
+                    self._video_native_fps = native if native > 0 else 0.0
+                    print(
+                        f"[TURZX video] Opened: {path!r}  "
+                        f"native_fps={self._video_native_fps:.3f}",
+                        file=sys.stderr,
+                    )
+
+                # Compute frame interval from native fps (fallback: VIDEO_FPS_CAP)
+                native = self._video_native_fps
+                frame_interval = 1.0 / (native if native > 0 else self.VIDEO_FPS_CAP)
 
                 if self._video_cap is None or not self._video_cap.isOpened():
                     return self._video_frame  # return last good frame if any
 
                 # If not enough time has passed, return cached frame
-                if self._video_frame is not None and (now - self._video_frame_time) < frame_interval:
+                if (
+                    self._video_frame is not None
+                    and (now - self._video_frame_time) < frame_interval
+                ):
                     return self._video_frame
 
                 # Advance to next frame
@@ -459,7 +495,10 @@ class Renderer:
         if el.gradient:
             # Gradient fill: render text as mask, create gradient, paste through mask
             bbox = draw.textbbox(
-                (el.x, el.y), text, font=font, anchor=el.anchor,
+                (el.x, el.y),
+                text,
+                font=font,
+                anchor=el.anchor,
                 stroke_width=stroke_w,
             )
             tw = bbox[2] - bbox[0]
@@ -468,14 +507,20 @@ class Renderer:
                 # Draw stroke first (underneath) if requested
                 if stroke_w > 0:
                     draw.text(
-                        (el.x, el.y), text, font=font, anchor=el.anchor,
-                        fill=stroke_fill, stroke_width=stroke_w,
+                        (el.x, el.y),
+                        text,
+                        font=font,
+                        anchor=el.anchor,
+                        fill=stroke_fill,
+                        stroke_width=stroke_w,
                         stroke_fill=stroke_fill,
                     )
                 # Create gradient patch
                 grad = _make_gradient(
-                    tw, th,
-                    tuple(el.color), tuple(el.gradient_color),
+                    tw,
+                    th,
+                    tuple(el.color),
+                    tuple(el.gradient_color),
                     el.gradient_angle,
                 )
                 # Create text mask
@@ -484,17 +529,27 @@ class Renderer:
                 # Draw text at local origin (offset from bbox)
                 mask_draw.text(
                     (el.x - bbox[0], el.y - bbox[1]),
-                    text, font=font, anchor=el.anchor, fill=255,
+                    text,
+                    font=font,
+                    anchor=el.anchor,
+                    fill=255,
                 )
                 canvas.paste(grad, (bbox[0], bbox[1]), mask)
         else:
             # Simple solid-color text (with optional stroke)
             draw.text(
-                (el.x, el.y), text, fill=fill, font=font, anchor=el.anchor,
-                stroke_width=stroke_w, stroke_fill=stroke_fill,
+                (el.x, el.y),
+                text,
+                fill=fill,
+                font=font,
+                anchor=el.anchor,
+                stroke_width=stroke_w,
+                stroke_fill=stroke_fill,
             )
 
-    def _draw_text(self, canvas: Image.Image, draw: ImageDraw.ImageDraw, el: LayoutElement) -> None:
+    def _draw_text(
+        self, canvas: Image.Image, draw: ImageDraw.ImageDraw, el: LayoutElement
+    ) -> None:
         self._render_text_on(canvas, draw, el.text, el)
 
     def _draw_sensor(
@@ -548,7 +603,9 @@ class Renderer:
     def _shape_fill(self, el: LayoutElement, w: int, h: int) -> tuple | Image.Image:
         """Return a fill color tuple or gradient image for shape fill."""
         if el.gradient and w > 0 and h > 0:
-            return _make_gradient(w, h, tuple(el.fill_color), tuple(el.gradient_color), el.gradient_angle)
+            return _make_gradient(
+                w, h, tuple(el.fill_color), tuple(el.gradient_color), el.gradient_angle
+            )
         return tuple(el.fill_color[:3]) + (el.fill_alpha,)
 
     def _draw_shape(
@@ -574,7 +631,9 @@ class Renderer:
         if el.gradient:
             layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             ld = ImageDraw.Draw(layer)
-            grad = _make_gradient(w, h, tuple(el.fill_color), tuple(el.gradient_color), el.gradient_angle)
+            grad = _make_gradient(
+                w, h, tuple(el.fill_color), tuple(el.gradient_color), el.gradient_angle
+            )
             # Create shape mask
             mask = Image.new("L", (w, h), 0)
             md = ImageDraw.Draw(mask)
@@ -602,11 +661,20 @@ class Renderer:
             fill = tuple(el.fill_color[:3]) + (el.fill_alpha,)
             if el.shape == "circle":
                 s = min(w, h)
-                draw.ellipse([x1, y1, x1 + s - 1, y1 + s - 1], fill=fill, outline=outline, width=sw)
+                draw.ellipse(
+                    [x1, y1, x1 + s - 1, y1 + s - 1],
+                    fill=fill,
+                    outline=outline,
+                    width=sw,
+                )
             elif el.shape == "ellipse":
-                draw.ellipse([x1, y1, x2 - 1, y2 - 1], fill=fill, outline=outline, width=sw)
+                draw.ellipse(
+                    [x1, y1, x2 - 1, y2 - 1], fill=fill, outline=outline, width=sw
+                )
             else:  # rect
-                draw.rectangle([x1, y1, x2 - 1, y2 - 1], fill=fill, outline=outline, width=sw)
+                draw.rectangle(
+                    [x1, y1, x2 - 1, y2 - 1], fill=fill, outline=outline, width=sw
+                )
 
     # ── Bars (sensor-linked) ──
 
@@ -686,8 +754,10 @@ class Renderer:
                 gh = fy2 - fy + 1
                 if gw > 0 and gh > 0:
                     fg = _make_gradient(
-                        gw, gh,
-                        tuple(el.bar_fg_color), tuple(el.bar_fg_color2),
+                        gw,
+                        gh,
+                        tuple(el.bar_fg_color),
+                        tuple(el.bar_fg_color2),
                         grad_angle,
                     )
                     canvas.paste(fg, (fx, fy), fg)
@@ -699,7 +769,8 @@ class Renderer:
         if el.stroke_width > 0:
             draw.rectangle(
                 [el.x, el.y, el.x + w - 1, el.y + h - 1],
-                outline=tuple(el.stroke_color), width=el.stroke_width,
+                outline=tuple(el.stroke_color),
+                width=el.stroke_width,
             )
 
     def _draw_arc_bar(
@@ -719,12 +790,22 @@ class Renderer:
 
         # Background arc (full sweep)
         bg_col = tuple(el.bar_bg_color[:3])
-        draw.arc(bbox, el.bar_start_angle, el.bar_start_angle + el.bar_sweep_angle,
-                 fill=bg_col, width=thickness)
+        draw.arc(
+            bbox,
+            el.bar_start_angle,
+            el.bar_start_angle + el.bar_sweep_angle,
+            fill=bg_col,
+            width=thickness,
+        )
 
         # Foreground arc (proportional to value)
         fg_sweep = int(el.bar_sweep_angle * pct)
         if fg_sweep > 0:
             fg_col = tuple(el.bar_fg_color[:3])
-            draw.arc(bbox, el.bar_start_angle, el.bar_start_angle + fg_sweep,
-                     fill=fg_col, width=thickness)
+            draw.arc(
+                bbox,
+                el.bar_start_angle,
+                el.bar_start_angle + fg_sweep,
+                fill=fg_col,
+                width=thickness,
+            )

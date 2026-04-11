@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+import threading
 import time
 import traceback
 
@@ -57,7 +58,6 @@ class RenderThread(QThread):
         self.daemon = daemon
         self._running = True
         self._cached_values: dict = {}
-        self._last_sensor_read: float = 0.0
 
         # Transition state
         self._last_layout_name: str = ""
@@ -69,38 +69,60 @@ class RenderThread(QThread):
     def run(self) -> None:
         # Prime sensor cache and build initial overlay
         self._cached_values = self.daemon.sensors.read_all()
-        self._last_sensor_read = time.monotonic()
         layout = self.daemon.config.active_layout
         self._last_layout_name = self.daemon.config.active_name
         self.daemon.renderer.update_overlay(layout, self._cached_values)
 
+        # Sensor updates run in a dedicated thread so they never block
+        # the video pipeline — even if read_all() takes 50 ms, the render
+        # loop keeps sending frames at full frame rate.
+        sensor_thread = threading.Thread(
+            target=self._sensor_loop, daemon=True, name="turzx-sensors"
+        )
+        sensor_thread.start()
+
         while self._running:
+            frame_start = time.monotonic()
             try:
                 self._tick()
             except Exception as e:
                 self.error_occurred.emit(str(e))
                 time.sleep(2)
 
+            # Sleep only the time remaining before the next frame deadline
             fps = self.daemon.config.active_layout.screen_fps
-            self.msleep(int(1000 / max(fps, 1)))
+            frame_budget_ms = 1000 / max(fps, 1)
+            elapsed_ms = (time.monotonic() - frame_start) * 1000
+            sleep_ms = max(0, frame_budget_ms - elapsed_ms)
+            self.msleep(int(sleep_ms))
+
+    def _sensor_loop(self) -> None:
+        """Dedicated thread: poll sensors and rebuild overlay at refresh_rate.
+
+        Runs independently of the render loop so a slow sensor read (50 ms+)
+        never causes a dropped video frame.
+        """
+        while self._running:
+            layout = self.daemon.config.active_layout
+            interval = max(layout.refresh_rate, 0.1)
+            time.sleep(interval)
+            if not self._running:
+                break
+            try:
+                self._cached_values = self.daemon.sensors.read_all()
+                self.daemon.renderer.update_overlay(layout, self._cached_values)
+            except Exception:
+                pass
 
     def _tick(self) -> None:
         layout = self.daemon.config.active_layout
         current_name = self.daemon.config.active_name
         now = time.monotonic()
 
-        # Detect layout switch → start transition
+        # Detect layout switch → start transition and force overlay rebuild
         if current_name != self._last_layout_name:
             self._start_transition(now)
             self._last_layout_name = current_name
-            # Force overlay rebuild for new layout
-            self.daemon.renderer.update_overlay(layout, self._cached_values)
-
-        # Sensor pipeline: poll sensors and rebuild overlay at refresh_rate
-        sensor_interval = max(layout.refresh_rate, 0.1)
-        if now - self._last_sensor_read >= sensor_interval:
-            self._cached_values = self.daemon.sensors.read_all()
-            self._last_sensor_read = now
             self.daemon.renderer.update_overlay(layout, self._cached_values)
 
         # Video pipeline: compose frame as PIL Image
@@ -116,13 +138,19 @@ class RenderThread(QThread):
                 self._transition_old_frame = None
             else:
                 new_frame = apply_transition(
-                    self._transition_old_frame, new_frame,
-                    progress, self._transition_type,
+                    self._transition_old_frame,
+                    new_frame,
+                    progress,
+                    self._transition_type,
                 )
 
         # Encode to JPEG
-        jpeg = to_jpeg(new_frame, self.daemon.renderer.width,
-                       self.daemon.renderer.height, rotate=layout.rotation)
+        jpeg = to_jpeg(
+            new_frame,
+            self.daemon.renderer.width,
+            self.daemon.renderer.height,
+            rotate=layout.rotation,
+        )
 
         # Cache the frame for next transition
         self._last_frame = new_frame

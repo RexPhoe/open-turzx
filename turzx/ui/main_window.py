@@ -37,7 +37,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
-from ..config import Layout, LayoutElement, Background, ModeConfig, ReactiveRule, RotativeConfig, ReactiveConfig
+from ..config import (
+    Layout,
+    LayoutElement,
+    Background,
+    ModeConfig,
+    ReactiveRule,
+    RotativeConfig,
+    ReactiveConfig,
+)
 from ..protocol import SCREEN_W, SCREEN_H
 from ..sensors.units import available_units
 from ..sensors.units import available_time_formats, available_date_formats
@@ -88,12 +96,14 @@ class ColorButton(QPushButton):
 
 # ── Available fonts (runtime detection) ──────────────────────
 
+
 def _get_system_fonts() -> list[str]:
     """Return sorted list of installed font family names via Qt."""
     try:
         return sorted(QFontDatabase.families())
     except Exception:
         return ["Arial", "DejaVu Sans", "Liberation Sans"]
+
 
 # ── Properties panel ──────────────────────────────────────────
 
@@ -965,6 +975,48 @@ class ConfigWindow(QMainWindow):
         rgl.addWidget(self._slider_rate)
         ll.addWidget(rg)
 
+        # Screen FPS
+        fpsg = QGroupBox(_("Screen FPS"))
+        fgsl = QVBoxLayout(fpsg)
+        fgsl.setSpacing(4)
+        self._combo_fps = QComboBox()
+        self._combo_fps.addItems(["24 fps", "30 fps", "60 fps"])
+        self._combo_fps.setCurrentIndex(2)  # default 60
+        fgsl.addWidget(self._combo_fps)
+        self._lbl_native_fps = QLabel()
+        self._lbl_native_fps.setStyleSheet("color: #aaa; font-size: 10px;")
+        self._lbl_native_fps.setVisible(False)
+        fgsl.addWidget(self._lbl_native_fps)
+        ll.addWidget(fpsg)
+
+        # Image adjustments: brightness and contrast
+        imgg = QGroupBox(_("Image"))
+        imggl = QVBoxLayout(imgg)
+        imggl.setSpacing(4)
+        # Brightness
+        imggl.addWidget(QLabel(_("Brightness")))
+        brow = QHBoxLayout()
+        self._slider_brightness = QSlider(Qt.Orientation.Horizontal)
+        self._slider_brightness.setRange(50, 300)   # 0.50 – 3.00
+        self._slider_brightness.setValue(100)
+        self._lbl_brightness = QLabel("1.00×")
+        self._lbl_brightness.setFixedWidth(38)
+        brow.addWidget(self._slider_brightness)
+        brow.addWidget(self._lbl_brightness)
+        imggl.addLayout(brow)
+        # Contrast
+        imggl.addWidget(QLabel(_("Contrast")))
+        crow = QHBoxLayout()
+        self._slider_contrast = QSlider(Qt.Orientation.Horizontal)
+        self._slider_contrast.setRange(50, 300)     # 0.50 – 3.00
+        self._slider_contrast.setValue(100)
+        self._lbl_contrast = QLabel("1.00×")
+        self._lbl_contrast.setFixedWidth(38)
+        crow.addWidget(self._slider_contrast)
+        crow.addWidget(self._lbl_contrast)
+        imggl.addLayout(crow)
+        ll.addWidget(imgg)
+
         # Device rotation
         rotg = QGroupBox(_("Device Rotation"))
         rotgl = QVBoxLayout(rotg)
@@ -1024,6 +1076,9 @@ class ConfigWindow(QMainWindow):
         self._btn_save.clicked.connect(self._save_layout)
         self._btn_save_as.clicked.connect(self._save_layout_as)
         self._slider_rate.valueChanged.connect(self._on_rate)
+        self._combo_fps.currentIndexChanged.connect(self._on_fps)
+        self._slider_brightness.valueChanged.connect(self._on_brightness)
+        self._slider_contrast.valueChanged.connect(self._on_contrast)
         self._combo_rotation.currentIndexChanged.connect(self._on_rotation)
 
         # add element buttons
@@ -1053,7 +1108,9 @@ class ConfigWindow(QMainWindow):
         self._btn_del_rule.clicked.connect(self._del_reactive_rule)
 
         # mode controller → UI sync
-        self.daemon.mode_controller.layout_switched.connect(self._on_mode_layout_switched)
+        self.daemon.mode_controller.layout_switched.connect(
+            self._on_mode_layout_switched
+        )
 
     # ── Layout management ──
 
@@ -1073,7 +1130,26 @@ class ConfigWindow(QMainWindow):
         self._combo_rotation.blockSignals(True)
         self._combo_rotation.setCurrentIndex(rot_map.get(layout.rotation, 2))
         self._combo_rotation.blockSignals(False)
+        # screen fps
+        fps_values = [24, 30, 60]
+        fps = self.daemon.config.active_layout.screen_fps
+        fps_idx = fps_values.index(fps) if fps in fps_values else 2
+        self._combo_fps.blockSignals(True)
+        self._combo_fps.setCurrentIndex(fps_idx)
+        self._combo_fps.blockSignals(False)
         self._adjust_canvas_timer()
+        self._update_native_fps_label()
+        # brightness / contrast
+        b_int = round(layout.brightness * 100)
+        c_int = round(layout.contrast * 100)
+        self._slider_brightness.blockSignals(True)
+        self._slider_brightness.setValue(max(50, min(300, b_int)))
+        self._lbl_brightness.setText(f"{layout.brightness:.2f}×")
+        self._slider_brightness.blockSignals(False)
+        self._slider_contrast.blockSignals(True)
+        self._slider_contrast.setValue(max(50, min(300, c_int)))
+        self._lbl_contrast.setText(f"{layout.contrast:.2f}×")
+        self._slider_contrast.blockSignals(False)
         self._load_mode_ui()
         self._dirty = False
         self._update_title()
@@ -1081,9 +1157,12 @@ class ConfigWindow(QMainWindow):
     def _on_layout_changed(self, name: str):
         if self._dirty:
             reply = QMessageBox.question(
-                self, _("Unsaved Changes"),
+                self,
+                _("Unsaved Changes"),
                 _("Save changes before switching layout?"),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
             )
             if reply == QMessageBox.StandardButton.Cancel:
                 # Revert combo without triggering signal
@@ -1215,17 +1294,19 @@ class ConfigWindow(QMainWindow):
         """Sync pause button text/state with mode controller."""
         paused = self.daemon.mode_controller._paused
         self._btn_pause_mode.setChecked(paused)
-        self._btn_pause_mode.setText(
-            _("Resume Mode") if paused else _("Pause Mode")
-        )
+        self._btn_pause_mode.setText(_("Resume Mode") if paused else _("Pause Mode"))
 
     def _add_reactive_rule(self):
         """Add a new process → layout rule via input dialogs."""
-        process, ok = QInputDialog.getText(self, _("Add Rule"), _("Process name (e.g. Code.exe):"))
+        process, ok = QInputDialog.getText(
+            self, _("Add Rule"), _("Process name (e.g. Code.exe):")
+        )
         if not ok or not process:
             return
         layouts = self.daemon.config.list_layouts()
-        layout, ok = QInputDialog.getItem(self, _("Add Rule"), _("Layout:"), layouts, 0, False)
+        layout, ok = QInputDialog.getItem(
+            self, _("Add Rule"), _("Layout:"), layouts, 0, False
+        )
         if not ok or not layout:
             return
         self._list_rules.addItem(QListWidgetItem(f"{process} → {layout}"))
@@ -1252,9 +1333,11 @@ class ConfigWindow(QMainWindow):
     def _load_mode_ui(self):
         """Populate mode UI from config."""
         mc = self.daemon.config.mode_config
-        {"static": self._r_static, "rotative": self._r_rotative, "reactive": self._r_reactive}.get(
-            mc.mode, self._r_static
-        ).setChecked(True)
+        {
+            "static": self._r_static,
+            "rotative": self._r_rotative,
+            "reactive": self._r_reactive,
+        }.get(mc.mode, self._r_static).setChecked(True)
         self._w_rotative.setVisible(mc.mode == "rotative")
         self._w_reactive.setVisible(mc.mode == "reactive")
         self._btn_pause_mode.setVisible(mc.mode != "static")
@@ -1265,7 +1348,9 @@ class ConfigWindow(QMainWindow):
         for i in range(self._list_rotate.count()):
             item = self._list_rotate.item(i)
             item.setCheckState(
-                Qt.CheckState.Checked if item.text() in rot_set else Qt.CheckState.Unchecked
+                Qt.CheckState.Checked
+                if item.text() in rot_set
+                else Qt.CheckState.Unchecked
             )
         self._sp_rotate_interval.setValue(mc.rotative.interval)
         idx = self._cb_rot_transition.findText(mc.rotative.transition)
@@ -1346,7 +1431,11 @@ class ConfigWindow(QMainWindow):
 
     def _add_bar(self):
         ids = list(self.daemon.sensors.read_all().keys())
-        sid = "cpu.percent" if "cpu.percent" in ids else (ids[0] if ids else "cpu.percent")
+        sid = (
+            "cpu.percent"
+            if "cpu.percent" in ids
+            else (ids[0] if ids else "cpu.percent")
+        )
         el = LayoutElement(
             type="bar",
             sensor_id=sid,
@@ -1362,7 +1451,11 @@ class ConfigWindow(QMainWindow):
 
     def _add_arc_bar(self):
         ids = list(self.daemon.sensors.read_all().keys())
-        sid = "cpu.percent" if "cpu.percent" in ids else (ids[0] if ids else "cpu.percent")
+        sid = (
+            "cpu.percent"
+            if "cpu.percent" in ids
+            else (ids[0] if ids else "cpu.percent")
+        )
         el = LayoutElement(
             type="arc_bar",
             sensor_id=sid,
@@ -1390,6 +1483,7 @@ class ConfigWindow(QMainWindow):
         """Handle background change: update scene and adjust canvas speed."""
         self._scene.set_background(bg)
         self._adjust_canvas_timer()
+        self._update_native_fps_label()
         self._mark_dirty()
         self._tick_canvas_render()
 
@@ -1400,6 +1494,40 @@ class ConfigWindow(QMainWindow):
             self._canvas_timer.setInterval(100)
         else:
             self._canvas_timer.setInterval(200)
+
+    def _on_fps(self, idx: int) -> None:
+        """Screen FPS combo changed."""
+        fps_values = [24, 30, 60]
+        fps = fps_values[idx] if 0 <= idx < len(fps_values) else 60
+        self.daemon.config.active_layout.screen_fps = fps
+        self._mark_dirty()
+
+    def _on_brightness(self, val: int) -> None:
+        """Brightness slider changed (50-300 → 0.50-3.00)."""
+        factor = val / 100.0
+        self._lbl_brightness.setText(f"{factor:.2f}×")
+        self.daemon.config.active_layout.brightness = factor
+        self._mark_dirty()
+
+    def _on_contrast(self, val: int) -> None:
+        """Contrast slider changed (50-300 → 0.50-3.00)."""
+        factor = val / 100.0
+        self._lbl_contrast.setText(f"{factor:.2f}×")
+        self.daemon.config.active_layout.contrast = factor
+        self._mark_dirty()
+
+    def _update_native_fps_label(self) -> None:
+        """Show the video's native fps next to the Screen FPS combo."""
+        layout = self.daemon.config.active_layout
+        if layout.background.type == "video" and layout.background.path:
+            native = self.daemon.renderer.video_native_fps
+            if native > 0:
+                self._lbl_native_fps.setText(f"Video nativo: {native:.2f} fps")
+            else:
+                self._lbl_native_fps.setText("Video nativo: — (aún no cargado)")
+            self._lbl_native_fps.setVisible(True)
+        else:
+            self._lbl_native_fps.setVisible(False)
 
     def _tick_canvas_render(self) -> None:
         """Render the full scene and update the canvas bitmap."""
@@ -1414,8 +1542,11 @@ class ConfigWindow(QMainWindow):
                 values = self.daemon.sensors.read_all()
             img = self.daemon.renderer.render_image(layout, values)
             from .editor import _pil_to_qpixmap
+
             pixmap = _pil_to_qpixmap(img)
             self._scene.update_render_pixmap(pixmap)
+            # Update native fps label (refreshes once the video is actually opened)
+            self._update_native_fps_label()
         except Exception:
             pass
 
@@ -1434,9 +1565,12 @@ class ConfigWindow(QMainWindow):
         self._canvas_timer.stop()
         if self._dirty:
             reply = QMessageBox.question(
-                self, _("Unsaved Changes"),
+                self,
+                _("Unsaved Changes"),
                 _("Save changes before closing?"),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
             )
             if reply == QMessageBox.StandardButton.Cancel:
                 event.ignore()

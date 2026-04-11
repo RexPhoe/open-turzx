@@ -325,9 +325,20 @@ class TurzxDevice:
     # ── Composite sequences ──
 
     def init_sequence(self):
-        """Minimal init matching C# _220E: just SET_DATETIME(2)."""
+        """Init session: close any stale session first, then start a fresh one.
+
+        Sending SET_DATETIME(0) + COMMIT before opening our session
+        clears any residual state left by the official TURZX software
+        (or a previous crash), preventing content overlay on startup.
+        """
         self._log("\n=== INIT ===")
-        self.set_datetime(2)
+        # 1. Close any lingering session from a previous app
+        self.set_datetime(mode=0)
+        time.sleep(0.1)
+        self.commit()
+        time.sleep(0.1)
+        # 2. Start our fresh session
+        self.set_datetime(mode=2)
         time.sleep(0.1)
         self._log("=== INIT DONE ===\n")
 

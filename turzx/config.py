@@ -112,6 +112,8 @@ class Layout:
     refresh_rate: float = 1.0  # sensor update interval in seconds (e.g. 1.0 = once/sec)
     screen_fps: int = 60  # fixed at 60 FPS for smooth video playback
     rotation: int = 180  # degrees clockwise for device output (0, 90, 180, 270)
+    brightness: float = 1.0  # image brightness multiplier (1.0 = unchanged)
+    contrast: float = 1.0   # image contrast multiplier  (1.0 = unchanged)
     elements: list[LayoutElement] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -122,6 +124,8 @@ class Layout:
             "refresh_rate": self.refresh_rate,
             "screen_fps": self.screen_fps,
             "rotation": self.rotation,
+            "brightness": self.brightness,
+            "contrast": self.contrast,
             "elements": [e.to_dict() for e in self.elements],
         }
 
@@ -131,8 +135,10 @@ class Layout:
             name=d.get("name", "Untitled"),
             background=Background.from_dict(d.get("background", {})),
             refresh_rate=d.get("refresh_rate", 1.0),
-            screen_fps=60,  # always 60 FPS
+            screen_fps=d.get("screen_fps", 60),
             rotation=d.get("rotation", 180),
+            brightness=d.get("brightness", 1.0),
+            contrast=d.get("contrast", 1.0),
             elements=[LayoutElement.from_dict(e) for e in d.get("elements", [])],
         )
 

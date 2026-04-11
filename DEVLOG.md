@@ -16,12 +16,14 @@
 | Rotacion pantalla | ✅ Configurable | Layout.rotation (0/90/180/270), default 180 |
 | App daemon + tray | ✅ Phase 1 | PySide6 tray, sensores psutil, render loop |
 | Visual editor | ✅ Phase 2 | Drag-and-drop, props panel, fondos, rotacion config |
-| Dynamic profiles | ✅ Phase 3 | Tres modos: static, rotative, reactive |
+| Dynamic profiles | ✅ Phase 3 | Tres modos: static, rotative, reactive (backend + UI) |
+| Transitions | ✅ Phase 3 | fade, swipe_left/right/up/down |
 | BOB (avatar virtual) | ⏳ Phase 4 | Personaje animado con IA — experimental |
 | Compatibilidad Linux | 🔧 En progreso | libusb + psutil + PySide6 = cross-platform |
 | Device se bloquea | ⚠️ Confirmado | Secuencias largas (>5-6 cmds) bloquean firmware |
 
 **FASE ACTUAL: Phase 4 — BOB (pendiente)**
+**Documentación: README.md + LICENSE (MIT) creados 2026-04-06**
 
 **Protocolo resuelto (2026-04-02):**
 - CMD 101 (`SEND_JPEG`) muestra imagen; CMD 102 es aceptado pero NO renderiza
@@ -57,12 +59,15 @@ Editor drag-and-drop para disenar layouts.
 - [x] CPU freq fallback via winreg en Windows
 - [x] Sensor cpu.freq_mhz adicional
 
-### Phase 3 — Dynamic Profiles
-La pantalla cambia automaticamente segun el programa activo.
-- [ ] Detectar programa/juego en primer plano
-- [ ] Asociar layouts a programas
-- [ ] Transicion automatica al cambiar de app
-- [ ] Fallback a layout por defecto
+### Phase 3 — Dynamic Profiles (COMPLETADO)
+La pantalla cambia automaticamente segun el contexto.
+- [x] Detectar programa/juego en primer plano (foreground.py)
+- [x] Asociar layouts a programas (reactive mode + UI reglas)
+- [x] Transicion automatica al cambiar de app (ModeController)
+- [x] Fallback a layout por defecto
+- [x] Modo rotativo con timer + transiciones
+- [x] Motor de transiciones PIL (fade, swipe)
+- [x] UI de modos en main_window (Apply Mode, Pause Mode)
 
 ### Phase 4 — BOB (Experimental)
 Avatar virtual animado que vive en la pantalla.
@@ -70,6 +75,60 @@ Avatar virtual animado que vive en la pantalla.
 - [ ] Reacciones a acciones del usuario
 - [ ] Sistema de emociones
 - [ ] Conexion con agente de IA para controlar comportamiento
+
+---
+
+## Sesión 2026-04-11
+
+### Contexto
+- Consolidación de cambios post-Phase 3: rendimiento, ajustes de imagen y calidad de código.
+- 5 commits locales pendientes de push + cambios sin commit.
+
+### Cambios realizados
+
+#### 1. Sensor polling en hilo dedicado (`daemon.py`)
+- Movido `read_all()` de sensores a un `threading.Thread` independiente (`turzx-sensors`).
+- El render loop ya nunca se bloquea por lecturas de sensores lentas (50 ms+).
+- Frame timing mejorado: calcula `sleep_ms` restante en vez de dormir fijo.
+
+#### 2. Init sequence robusto (`device.py`)
+- `init_sequence()` ahora cierra sesiones anteriores antes de abrir una nueva.
+- Secuencia: `SET_DATETIME(0)` → `COMMIT` → pausa → `SET_DATETIME(2)`.
+- Evita superposición de contenido al iniciar tras la app oficial o un crash previo.
+
+#### 3. Brillo y contraste por layout (`config.py`, `renderer.py`, `main_window.py`)
+- Nuevos campos `Layout.brightness` y `Layout.contrast` (multiplicadores, 1.0 = sin cambio).
+- Serialización completa (to_dict / from_dict).
+- `Renderer._apply_image_adjustments()` usa PIL `ImageEnhance`.
+- UI: sliders de Brillo y Contraste (rango 0.50×–3.00×) en el panel izquierdo.
+
+#### 4. Screen FPS configurable (`config.py`, `main_window.py`)
+- `screen_fps` ahora se serializa/deserializa (antes estaba forzado a 60).
+- UI: combo "Screen FPS" con opciones 24/30/60 fps.
+- Label informativo muestra el fps nativo del video de fondo cuando aplica.
+
+#### 5. FPS nativo del video (`renderer.py`)
+- Se lee `CAP_PROP_FPS` de OpenCV al abrir cada video.
+- `Renderer.video_native_fps` expuesto como property.
+- Frame interval calculado desde fps nativo (fallback a `VIDEO_FPS_CAP=60`).
+- Log a stderr al abrir video: `[TURZX video] Opened: ... native_fps=...`.
+
+#### 6. Formato de código (renderer.py, main_window.py)
+- Reformateo automático (Black/ruff): líneas largas partidas en llamadas a funciones PIL.
+- Sin cambios funcionales, solo legibilidad.
+
+#### 7. Documentación y licencia
+- `README.md` creado: instalación, uso, editor, modos, sensores, arquitectura, pipeline.
+- `LICENSE` (MIT) añadido.
+- `pyproject.toml`: campo `license = "MIT"`.
+- `DEVLOG.md`: Phase 3 marcada como COMPLETADO, tareas actualizadas.
+
+### Archivos modificados
+```
+DEVLOG.md, pyproject.toml, LICENSE (nuevo), README.md (nuevo),
+turzx/config.py, turzx/daemon.py, turzx/device.py,
+turzx/renderer.py, turzx/ui/main_window.py
+```
 
 ---
 
