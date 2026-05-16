@@ -7,6 +7,7 @@ and toolbox.  The canvas shows real PIL-rendered output.
 
 from __future__ import annotations
 
+import copy
 import sys
 from typing import TYPE_CHECKING
 
@@ -1104,8 +1105,8 @@ class ConfigWindow(QMainWindow):
         self._scene.layout_modified.connect(self._on_layout_modified)
         self._props.property_changed.connect(self._on_element_changed)
         self._props.background_changed.connect(self._on_background_changed)
-        self._props.delete_requested.connect(self._scene.remove_selected)
-        self._props.duplicate_requested.connect(self._scene.duplicate_selected)
+        self._props.delete_requested.connect(self._on_delete_requested)
+        self._props.duplicate_requested.connect(self._on_duplicate_requested)
 
         # display mode
         self._r_static.toggled.connect(self._on_mode_radio)
@@ -1502,6 +1503,25 @@ class ConfigWindow(QMainWindow):
         self._scene.refresh_item(element)
         self._mark_dirty()
         self._tick_canvas_render()
+
+    def _on_delete_requested(self) -> None:
+        """Delete the element currently shown in the PropertiesPanel."""
+        el = self._props._element
+        if el is not None:
+            self._scene.remove_element(el)
+        else:
+            self._scene.remove_selected()
+
+    def _on_duplicate_requested(self) -> None:
+        """Duplicate the element currently shown in the PropertiesPanel."""
+        el = self._props._element
+        if el is not None:
+            new_el = copy.deepcopy(el)
+            new_el.x += 20
+            new_el.y += 20
+            self._scene.add_element(new_el)
+        else:
+            self._scene.duplicate_selected()
 
     def _on_background_changed(self, bg) -> None:
         """Handle background change: update scene and adjust canvas speed."""

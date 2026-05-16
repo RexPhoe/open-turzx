@@ -400,6 +400,8 @@ class EditorScene(QGraphicsScene):
         return item
 
     def remove_selected(self) -> None:
+        """Remove all selected elements (even locked ones)."""
+        removed = False
         for item in list(self.selectedItems()):
             if isinstance(item, ElementItem):
                 if self._layout and item.element in self._layout.elements:
@@ -407,8 +409,40 @@ class EditorScene(QGraphicsScene):
                 if item in self._items:
                     self._items.remove(item)
                 self.removeItem(item)
+                removed = True
+        if removed:
+            self.element_selected.emit(None)
+            self.layout_modified.emit()
+
+    def remove_element(self, element: LayoutElement) -> None:
+        """Remove a specific element by reference (from PropertiesPanel)."""
+        for item in self._items:
+            if item.element is element:
+                if self._layout and element in self._layout.elements:
+                    self._layout.elements.remove(element)
+                self._items.remove(item)
+                self.removeItem(item)
+                break
         self.element_selected.emit(None)
         self.layout_modified.emit()
+
+    def lock_selected(self, locked: bool) -> None:
+        """Set lock state on all selected elements."""
+        for item in list(self.selectedItems()):
+            if isinstance(item, ElementItem):
+                item.element.locked = locked
+                item.refresh()
+        if self.selectedItems():
+            self.layout_modified.emit()
+
+    def select_all(self) -> None:
+        """Select all editable elements in the scene."""
+        self.blockSignals(True)
+        self.clearSelection()
+        for item in self._items:
+            item.setSelected(True)
+        self.blockSignals(False)
+        self._on_selection()
 
     def duplicate_selected(self) -> None:
         for item in list(self.selectedItems()):
@@ -561,6 +595,14 @@ class EditorScene(QGraphicsScene):
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Delete:
             self.remove_selected()
+        elif event.key() == Qt.Key.Key_L and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Toggle lock on all selected: lock if any is unlocked, unlock if all locked
+            sel = [i for i in self.selectedItems() if isinstance(i, ElementItem)]
+            if sel:
+                all_locked = all(getattr(i.element, "locked", False) for i in sel)
+                self.lock_selected(not all_locked)
+        elif event.key() == Qt.Key.Key_A and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.select_all()
         else:
             super().keyPressEvent(event)
 
