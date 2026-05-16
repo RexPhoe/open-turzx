@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QGraphicsItem,
     QGraphicsPixmapItem,
+    QGraphicsSceneMouseEvent,
     QListWidget,
     QListWidgetItem,
     QVBoxLayout,
@@ -164,6 +165,18 @@ class ElementItem(QGraphicsItem):
             painter.drawRect(self._bounds)
 
     # ── interaction ──
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        # Ctrl+click toggles selection, Shift+click adds to selection
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.setSelected(not self.isSelected())
+            event.accept()
+            return
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.setSelected(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:

@@ -303,8 +303,83 @@ def _mangohud_is_running() -> bool:
     return False
 
 
+def _mangohud_installed() -> bool:
+    """Check if mangohud binary is installed on the system."""
+    import shutil
+    return shutil.which("mangohud") is not None
+
+
+def fps_diagnose() -> dict:
+    """Return a diagnostic dict of the FPS setup on Linux.
+
+    Returns keys: installed, running, log_found, log_path, fps, suggestion.
+    """
+    result: dict = {
+        "installed": False,
+        "running": False,
+        "log_found": False,
+        "log_path": "",
+        "fps": 0.0,
+        "suggestion": "",
+    }
+
+    if sys.platform != "win32" and not sys.platform.startswith("linux"):
+        result["suggestion"] = "FPS sensor is platform-specific (Windows/RTSS, Linux/MangoHud)"
+        return result
+
+    result["installed"] = _mangohud_installed()
+    result["running"] = _mangohud_is_running()
+
+    # Check for log files
+    dedicated = Path("/tmp/turzx_fps.log")
+    if dedicated.exists():
+        result["log_found"] = True
+        result["log_path"] = str(dedicated)
+        result["fps"] = _parse_mangohud_csv(dedicated, max_age_seconds=60)
+    else:
+        mangohud_dir = Path.home() / "mangohud_logs"
+        if mangohud_dir.is_dir():
+            try:
+                for f in sorted(mangohud_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                    if f.suffix == ".csv" and f.stat().st_size > 0:
+                        result["log_found"] = True
+                        result["log_path"] = str(f)
+                        result["fps"] = _parse_mangohud_csv(f, max_age_seconds=60)
+                        break
+            except OSError:
+                pass
+
+    if not result["installed"]:
+        result["suggestion"] = (
+            "MangoHud is not installed. Install it with your package manager:\n"
+            "  Arch:   sudo pacman -S mangohud\n"
+            "  Ubuntu: sudo apt install mangohud\n"
+            "  Fedora: sudo dnf install mangohud\n"
+            "Then launch games with: "
+            "MANGOHUD_CONFIG=fps_only,log_interval=100,autostart_log,output_file=/tmp/turzx_fps.log mangohud %command%"
+        )
+    elif not result["log_found"]:
+        result["suggestion"] = (
+            "MangoHud is installed but no log file was found. "
+            "Launch a game with MangoHud logging enabled:\n"
+            "  MANGOHUD_CONFIG=fps_only,log_interval=100,autostart_log,output_file=/tmp/turzx_fps.log mangohud %command%"
+        )
+    elif result["fps"] == 0.0:
+        result["suggestion"] = (
+            "MangoHud log found but FPS is 0. Make sure a game is actually rendering frames."
+        )
+    else:
+        result["suggestion"] = "FPS sensor is working correctly."
+
+    return result
+
+
 class FpsSensor(SensorBackend):
     """Reads game FPS via RTSS (Windows) or MangoHud (Linux)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._diagnosed = False
 
     def read(self) -> list[SensorReading]:
         fps: float = 0.0
@@ -319,6 +394,12 @@ class FpsSensor(SensorBackend):
                 _, fps = _read_mangohud_fps()
             except Exception:
                 pass
+            if not self._diagnosed:
+                self._diagnosed = True
+                diag = fps_diagnose()
+                if not diag["installed"]:
+                    import sys as _sys
+                    print(f"[TURZX FPS] {diag['suggestion']}", file=_sys.stderr)
 
         # Always report the sensor so it appears in the sensor list.
         # Shows 0 when no FPS source is detected / no 3D app is active.
