@@ -313,9 +313,9 @@ class EditorScene(QGraphicsScene):
     element_selected = Signal(object)  # LayoutElement | None
     layout_modified = Signal()
 
-    # Circular mask constants (screen is round, visible area is 420px diameter)
+    # Circular mask constants (screen is round, visible area is 460px diameter)
     MASK_CENTER = (SCREEN_W / 2, SCREEN_H / 2)
-    MASK_RADIUS = 210
+    MASK_RADIUS = 230
     MASK_DIM_COLOR = QColor(0, 0, 0, 110)
     MASK_RING_COLOR = QColor(255, 255, 255, 70)
     MASK_RING_WIDTH = 2.5
