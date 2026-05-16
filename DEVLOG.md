@@ -1573,3 +1573,48 @@ Nuevos campos en `Background`: `crop_x`, `crop_y`, `crop_w`, `crop_h`.
 42. `_read_video_frame()` retorna el frame en su tamaño original — el posicionamiento se aplica en `_place_bg_media()`, no en el reader.
 43. `crop_w=0` y `crop_h=0` significan "pantalla completa" — esto garantiza que layouts antiguos sin crop fields funcionen como siempre (stretch completo).
 44. El cache de `_get_static_bg` debe incluir los crop values en la key — si el usuario mueve la posición, debe re-renderizar.
+
+---
+
+## Sesion 11 — Transiciones Random y Efectos Clasicos (2026-05-16)
+
+### Problema
+El motor de transiciones solo tenia `fade` y desplazamientos `swipe_*`. Faltaba un modo `random` para variar automaticamente entre cambios de layout y faltaban transiciones clasicas sencillas como zoom, disolucion, wipes, iris, persianas y tablero.
+
+### Solucion
+Se amplio `turzx/transitions.py` manteniendo el mismo contrato: cada efecto recibe frames PIL completos `old`, `new` y `progress`, y devuelve un frame PIL completo. El modo `random` se resuelve una sola vez al iniciar la transicion en `RenderThread._start_transition()`, de forma que toda la animacion usa el mismo efecto hasta completarse.
+
+**Efectos disponibles:**
+- `none` — cambio instantaneo
+- `random` — elige aleatoriamente un efecto real por cada cambio
+- `fade` — crossfade entre frames
+- `dissolve` — mascara de ruido determinista
+- `zoom_in` / `zoom_out` — crecimiento del nuevo frame o reduccion del viejo
+- `swipe_left` / `swipe_right` / `swipe_up` / `swipe_down` — desplazamiento completo de pantallas
+- `wipe_left` / `wipe_right` / `wipe_up` / `wipe_down` — revelado direccional
+- `iris_circle` / `iris_box` — apertura desde el centro
+- `blinds_horizontal` / `blinds_vertical` — persianas por franjas
+- `checkerboard` — revelado por celdas alternas
+
+### Cambios
+
+#### `transitions.py`
+- `TRANSITIONS` actualizado para la UI.
+- `resolve(kind)` nuevo: convierte `random` en un efecto concreto.
+- Nuevas funciones PIL: `_dissolve`, `_zoom_in`, `_zoom_out`, `_wipe_*`, `_iris_*`, `_blinds_*`, `_checkerboard`.
+- Cache de mascara de disolucion por tamano para no recrear ruido en cada frame.
+
+#### `daemon.py`
+- `_start_transition()` llama `resolve_transition()` despues de leer la config y antes de guardar el tipo activo.
+- El efecto `random` queda fijado para toda la duracion de la transicion actual.
+
+#### `README.md`
+- Lista de transiciones actualizada para reflejar todos los modos disponibles.
+
+### Auditoria Linux
+Transiciones compatibles con Linux y Windows: solo usan PIL y `random` de la libreria estandar. No requieren aceleracion grafica ni APIs de sistema.
+
+### Reglas nuevas del bucle
+45. `random` debe resolverse al iniciar la transicion, nunca dentro de `apply()`, para evitar que cada frame cambie de algoritmo.
+46. Las nuevas transiciones deben seguir operando sobre frames PIL completos post-compose.
+47. Las mascaras o patrones costosos deben cachearse por tamano cuando se recalculan en cada frame.

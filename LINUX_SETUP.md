@@ -237,26 +237,30 @@ sudo pacman -S mangohud          # Arch
 
 Para que TURZX lea los FPS, MangoHud debe escribir un log. Hay dos opciones:
 
-**Opción A — Log dedicado de TURZX** (recomendado):
-```bash
-mangohud --mangohud-config "fps_only,log_interval=100,autostart_log,output_file=/tmp/turzx_fps.log" %command%
+**Opción A — Log dedicado en /tmp/turzx_logs** (recomendado):
+```
+MANGOHUD_CONFIG=fps_only,alpha=0,background_alpha=0,font_size=1,log_interval=100,autostart_log,output_folder=/tmp/turzx_logs mangohud %command%
 ```
 
-**Opción B — Auto-detección**: TURZX busca automáticamente logs de MangoHud en `~/mangohud_logs/` y `/tmp/`. Si MangoHud está configurado con `log_interval=100` y `autostart_log`, TURZX lo detectará sin configuración adicional.
+**Opción B — Auto-detección**: Sin `output_folder`, MangoHud >=0.8.3 escribe los logs en `$HOME/{programa}_{fecha}.csv`. TURZX los detecta automáticamente, pero la Opción A es más limpia.
+
+**Nota importante**: MangoHud >=0.8.3 **ignora** el parámetro `output_file` (obsoleto). Usa `output_folder` en su lugar.
 
 ### Ejemplo Steam
 
 En las opciones de lanzamiento del juego:
 ```
-MANGOHUD_CONFIG=fps_only,log_interval=100,autostart_log,output_file=/tmp/turzx_fps.log mangohud %command%
+MANGOHUD=1 MANGOHUD_CONFIG=fps_only,alpha=0,background_alpha=0,font_size=1,log_interval=100,autostart_log,output_folder=/tmp/turzx_logs mangohud %command%
 ```
 
 ### Cómo funciona
 
 TURZX comprueba en orden:
 1. El archivo `/tmp/turzx_fps.log` (log dedicado)
-2. El directorio `~/mangohud_logs/` (logs por defecto de MangoHud)
-3. Memoria compartida de MangoHud
+2. El directorio `/tmp/turzx_logs/` (recomendado para TURZX)
+3. El directorio `~/mangohud_logs/` (logs por defecto de MangoHud)
+4. CSV recientes en `$HOME` y `/tmp`
+5. Memoria compartida de MangoHud
 
 Si MangoHud está corriendo pero no hay juego activo, mostrará **0 FPS**.
 

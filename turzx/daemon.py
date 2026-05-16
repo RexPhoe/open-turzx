@@ -18,7 +18,7 @@ import threading
 import time
 import traceback
 
-from PySide6.QtCore import QThread, Signal, QObject
+from PySide6.QtCore import QThread, Signal, QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
 from .config import ConfigManager
@@ -27,7 +27,7 @@ from .images import to_jpeg
 from .modes import ModeController
 from .renderer import Renderer
 from .sensors.base import SensorManager
-from .transitions import apply as apply_transition
+from .transitions import apply as apply_transition, resolve as resolve_transition
 from .tray import TurzxTray
 
 
@@ -104,13 +104,13 @@ class RenderThread(QThread):
         never causes a dropped video frame.
         """
         while self._running:
-            layout = self.daemon.config.active_layout
-            interval = max(layout.refresh_rate, 0.1)
+            interval = max(self.daemon.config.active_layout.refresh_rate, 0.1)
             time.sleep(interval)
             if not self._running:
                 break
             try:
                 self._cached_values = self.daemon.sensors.read_all()
+                layout = self.daemon.config.active_layout
                 self.daemon.renderer.update_overlay(layout, self._cached_values)
             except Exception:
                 pass
@@ -183,6 +183,7 @@ class RenderThread(QThread):
             return
         if self._transition_type == "none":
             return
+        self._transition_type = resolve_transition(self._transition_type)
         self._transition_old_frame = old.copy()
         self._transition_start = now
 
@@ -300,13 +301,22 @@ class TurzxDaemon(QObject):
     # ── Settings window ──
 
     def show_settings(self) -> None:
-        from .ui.main_window import ConfigWindow
+        try:
+            from .ui.main_window import ConfigWindow
 
-        if self._settings_window is None:
-            self._settings_window = ConfigWindow(self)
-        self._settings_window.show()
-        self._settings_window.raise_()
-        self._settings_window.activateWindow()
+            if self._settings_window is None:
+                self._settings_window = ConfigWindow(self)
+            self._settings_window.show()
+            self._settings_window.raise_()
+            self._settings_window.activateWindow()
+        except Exception as exc:
+            import traceback
+            print(f"[TURZX] Error opening settings: {exc}", file=sys.stderr)
+            traceback.print_exc()
+            if self.tray:
+                self.tray.showMessage(
+                    "TURZX", f"Error opening settings: {exc}", self.tray.icon()
+                )
 
 
 # ── Entry point ──
@@ -330,5 +340,8 @@ def main() -> None:
 
     daemon = TurzxDaemon()
     daemon.start()
+
+    if "--settings" in sys.argv:
+        QTimer.singleShot(0, daemon.show_settings)
 
     sys.exit(app.exec())

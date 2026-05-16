@@ -78,7 +78,11 @@ class TurzxTray(QSystemTrayIcon):
         self.daemon.mode_controller.layout_switched.connect(self._update_mode_tooltip)
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+            QSystemTrayIcon.ActivationReason.MiddleClick,
+        ):
             self._open_settings()
 
     def _toggle_render(self) -> None:

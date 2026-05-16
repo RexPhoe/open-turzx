@@ -7,7 +7,7 @@ Linux: reads FPS from MangoHud log files or shared memory.
 If no FPS source is detected, the sensor silently produces no readings.
 
 Linux usage: install mangohud and configure it to write benchmark logs
-  MANGOHUD_CONFIG=fps_only,log_interval=100,autostart_log,output_file=/tmp/turzx_fps.log
+  MANGOHUD_CONFIG=fps_only,log_interval=100,autostart_log,output_folder=/tmp/turzx_logs
 Or TURZX will auto-detect MangoHud benchmark logs in ~/mangohud_logs/ and /tmp/.
 """
 
@@ -23,6 +23,11 @@ from .base import SensorBackend, SensorReading
 
 # RTSS shared memory constants
 _RTSS_SIGNATURE = 0x52545353  # 'RTSS' in little-endian
+_TURZX_MANGOHUD_DIR = Path("/tmp/turzx_logs")
+_MANGOHUD_CONFIG = (
+    "fps_only,alpha=0,background_alpha=0,font_size=1,"
+    "log_interval=100,autostart_log,output_folder=/tmp/turzx_logs"
+)
 
 
 def _read_rtss_fps() -> tuple[bool, float]:
@@ -152,6 +157,8 @@ def _read_mangohud_fps() -> tuple[bool, float]:
 
     Returns (mangohud_available, fps).
     """
+    _ensure_mangohud_log_dir()
+
     fps = _read_mangohud_log()
     if fps > 0:
         return True, fps
@@ -167,38 +174,84 @@ def _read_mangohud_fps() -> tuple[bool, float]:
     return False, 0.0
 
 
+def _find_recent_mangohud_csv(search_dir: Path) -> Path | None:
+    """Return the most recently modified MangoHud CSV log in a directory.
+
+    MangoHud v0.8.3+ names logs as `{program}_{YYYY-MM-DD}_{HH-MM-SS}.csv`.
+    We match files ending with the timestamp pattern and sort by mtime.
+    """
+    if not search_dir.is_dir():
+        return None
+    csv_files: list[Path] = []
+    try:
+        for f in search_dir.iterdir():
+            if not f.is_file():
+                continue
+            if f.suffix != ".csv":
+                continue
+            if f.stat().st_size == 0:
+                continue
+            csv_files.append(f)
+    except OSError:
+        return None
+    if not csv_files:
+        return None
+    csv_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return csv_files[0]
+
+
+def _ensure_mangohud_log_dir() -> None:
+    """Create the log folder used by TURZX launcher configs if possible."""
+    try:
+        _TURZX_MANGOHUD_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+
 def _read_mangohud_log() -> float:
     """Parse MangoHud benchmark log for latest FPS value.
 
-    MangoHud benchmark logs are CSV files with headers like:
-        frametime,fps,cpu_load,...
-        16.6,60.2,45,...
+    MangoHud v0.8.0+ writes CSV logs to $HOME by default (when output_folder
+    is not set).  The naming convention is: {program}_{timestamp}.csv
 
-    Search paths (in order): TURZX's dedicated path, MangoHud's default dir, /tmp.
+    Search order:
+    1. Dedicated /tmp/turzx_fps.log (legacy output_file, pre-0.8.3)
+    2. /tmp/turzx_logs/ (recommended output_folder for TURZX)
+    3. MangoHud default: ~/mangohud_logs/
+    4. $HOME (MangoHud >=0.8.3 default when output_folder is empty)
+    5. /tmp/ fallback CSV files
     """
     log_candidates: list[Path] = []
 
-    # Dedicated TURZX FPS log file (user-configured)
-    dedicated = Path("/tmp/turzx_fps.log")
-    if dedicated.exists():
-        log_candidates.append(dedicated)
+    # 1. Legacy dedicated log file (output_file parameter, pre-0.8.3)
+    legacy = Path("/tmp/turzx_fps.log")
+    if legacy.exists():
+        log_candidates.append(legacy)
 
-    # MangoHud default log directory
+    # 2. TURZX recommended output_folder
+    recent = _find_recent_mangohud_csv(_TURZX_MANGOHUD_DIR)
+    if recent:
+        log_candidates.append(recent)
+
+    # 3. MangoHud legacy log directory (~/mangohud_logs/)
     mangohud_dir = Path.home() / "mangohud_logs"
-    if mangohud_dir.is_dir():
-        try:
-            for f in sorted(mangohud_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-                if f.suffix == ".csv" and f.stat().st_size > 0:
-                    log_candidates.append(f)
-                    break
-        except OSError:
-            pass
+    recent = _find_recent_mangohud_csv(mangohud_dir)
+    if recent:
+        log_candidates.append(recent)
 
-    # Additional /tmp paths
+    # 4. $HOME (MangoHud >=0.8.3 default when output_folder not set)
+    recent = _find_recent_mangohud_csv(Path.home())
+    if recent:
+        log_candidates.append(recent)
+
+    # 5. /tmp loose CSV files (e.g. mangohud_fps.log, mangohud.csv)
     for tmp_name in ["mangohud_fps.log", "mangohud.csv"]:
         p = Path("/tmp") / tmp_name
         if p.exists():
             log_candidates.append(p)
+    recent = _find_recent_mangohud_csv(Path("/tmp"))
+    if recent:
+        log_candidates.append(recent)
 
     for log_path in log_candidates:
         try:
@@ -211,11 +264,15 @@ def _read_mangohud_log() -> float:
     return 0.0
 
 
-def _parse_mangohud_csv(path: Path, max_age_seconds: int = 5) -> float:
+def _parse_mangohud_csv(path: Path, max_age_seconds: int = 10) -> float:
     """Parse a MangoHud CSV log and return the latest FPS value.
 
+    Handles two MangoHud CSV formats:
+    - v0.7.x: First row = column headers (fps,frametime,...)
+    - v0.8.x: Three header rows (system info, then fps,frametime,...)
+      The third row contains the actual column names.
+
     Only considers entries written in the last max_age_seconds.
-    Expects CSV with headers containing 'fps' column.
     """
     if not path.exists():
         return 0.0
@@ -226,27 +283,46 @@ def _parse_mangohud_csv(path: Path, max_age_seconds: int = 5) -> float:
 
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            reader = csv.DictReader(f)
-            if reader.fieldnames is None:
-                return 0.0
+            lines = f.readlines()
 
-            fps_col = None
-            for col in reader.fieldnames:
-                if col.strip().lower() == "fps":
-                    fps_col = col
-                    break
+        if len(lines) < 2:
+            return 0.0
 
-            if fps_col is None:
-                return 0.0
+        # MangoHud v0.8.x: third line is the actual header row
+        # MangoHud v0.7.x: first line is the header row
+        header_line = 0
+        for i, line in enumerate(lines[:4]):
+            if "fps" in line.lower() and "frametime" in line.lower():
+                header_line = i
+                break
 
-            last_fps = 0.0
-            for row in reader:
-                try:
-                    last_fps = float(row[fps_col])
-                except (ValueError, KeyError):
-                    continue
+        if header_line == 0 and len(lines) <= 2:
+            return 0.0
 
-            return last_fps
+        # Parse with csv.DictReader, skipping lines before the header
+        import io
+        csv_data = "".join(lines[header_line:])
+        reader = csv.DictReader(io.StringIO(csv_data))
+        if reader.fieldnames is None:
+            return 0.0
+
+        fps_col = None
+        for col in reader.fieldnames:
+            if col.strip().lower() == "fps":
+                fps_col = col
+                break
+
+        if fps_col is None:
+            return 0.0
+
+        last_fps = 0.0
+        for row in reader:
+            try:
+                last_fps = float(row[fps_col])
+            except (ValueError, KeyError):
+                continue
+
+        return last_fps
     except Exception:
         return 0.0
 
@@ -327,27 +403,26 @@ def fps_diagnose() -> dict:
         result["suggestion"] = "FPS sensor is platform-specific (Windows/RTSS, Linux/MangoHud)"
         return result
 
+    _ensure_mangohud_log_dir()
+
     result["installed"] = _mangohud_installed()
     result["running"] = _mangohud_is_running()
 
-    # Check for log files
-    dedicated = Path("/tmp/turzx_fps.log")
-    if dedicated.exists():
+    # Check the same sources used by the live reader.
+    candidates = [
+        Path("/tmp/turzx_fps.log"),
+        _find_recent_mangohud_csv(_TURZX_MANGOHUD_DIR),
+        _find_recent_mangohud_csv(Path.home() / "mangohud_logs"),
+        _find_recent_mangohud_csv(Path.home()),
+        _find_recent_mangohud_csv(Path("/tmp")),
+    ]
+    for candidate in candidates:
+        if candidate is None or not candidate.exists():
+            continue
         result["log_found"] = True
-        result["log_path"] = str(dedicated)
-        result["fps"] = _parse_mangohud_csv(dedicated, max_age_seconds=60)
-    else:
-        mangohud_dir = Path.home() / "mangohud_logs"
-        if mangohud_dir.is_dir():
-            try:
-                for f in sorted(mangohud_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-                    if f.suffix == ".csv" and f.stat().st_size > 0:
-                        result["log_found"] = True
-                        result["log_path"] = str(f)
-                        result["fps"] = _parse_mangohud_csv(f, max_age_seconds=60)
-                        break
-            except OSError:
-                pass
+        result["log_path"] = str(candidate)
+        result["fps"] = _parse_mangohud_csv(candidate, max_age_seconds=60)
+        break
 
     if not result["installed"]:
         result["suggestion"] = (
@@ -355,14 +430,15 @@ def fps_diagnose() -> dict:
             "  Arch:   sudo pacman -S mangohud\n"
             "  Ubuntu: sudo apt install mangohud\n"
             "  Fedora: sudo dnf install mangohud\n"
-            "Then launch games with: "
-            "MANGOHUD_CONFIG=fps_only,log_interval=100,autostart_log,output_file=/tmp/turzx_fps.log mangohud %command%"
+            "Then set in Lutris/Steam launch options:\n"
+            f"  MANGOHUD=1 MANGOHUD_CONFIG={_MANGOHUD_CONFIG}"
         )
     elif not result["log_found"]:
         result["suggestion"] = (
             "MangoHud is installed but no log file was found. "
             "Launch a game with MangoHud logging enabled:\n"
-            "  MANGOHUD_CONFIG=fps_only,log_interval=100,autostart_log,output_file=/tmp/turzx_fps.log mangohud %command%"
+            f"  MANGOHUD=1 MANGOHUD_CONFIG={_MANGOHUD_CONFIG}\n"
+            "Note: MangoHud >=0.8.3 ignores 'output_file'. Use 'output_folder' instead."
         )
     elif result["fps"] == 0.0:
         result["suggestion"] = (
@@ -397,10 +473,14 @@ class FpsSensor(SensorBackend):
             if not self._diagnosed:
                 self._diagnosed = True
                 diag = fps_diagnose()
-                if not diag["installed"]:
+                if not diag["installed"] or not diag["log_found"]:
                     import sys as _sys
                     print(f"[TURZX FPS] {diag['suggestion']}", file=_sys.stderr)
 
         # Always report the sensor so it appears in the sensor list.
-        # Shows 0 when no FPS source is detected / no 3D app is active.
-        return [SensorReading("sys.fps", "Game FPS", round(fps), "FPS", "system")]
+        # Keep sys.fps for existing layouts and expose the documented fps.current.
+        value = round(fps)
+        return [
+            SensorReading("fps.current", "Game FPS", value, "FPS", "system"),
+            SensorReading("sys.fps", "Game FPS", value, "FPS", "system"),
+        ]

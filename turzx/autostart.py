@@ -28,9 +28,15 @@ def _desktop_path() -> Path:
 
 
 def _exec_command() -> str:
-    """Determine the best command to launch TURZX."""
-    # Prefer the module approach (works for both pip-installed and source)
-    # Use sys.executable to match the current Python
+    """Determine the best command to launch TURZX.
+
+    Uses the project's run_turzx.sh wrapper which activates the venv
+    and sets Qt platform plugin / library paths required for PySide6.
+    Falls back to raw python -m turzx if the script is missing.
+    """
+    script = Path(__file__).resolve().parent.parent / "run_turzx.sh"
+    if script.is_file():
+        return str(script)
     return f"{sys.executable} -m turzx"
 
 

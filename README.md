@@ -31,7 +31,7 @@ TURZX is an open-source driver and dashboard for the **TURZX 2.8" round USB scre
 
 ## Features
 
-- **Real-time system monitoring** — CPU (with turbo frequency), GPU (NVIDIA), RAM, disk, network, battery, uptime, clock, and game FPS via RTSS.
+- **Real-time system monitoring** — CPU (with turbo frequency), GPU (NVIDIA), RAM, disk, network, battery, uptime, clock, and game FPS via RTSS/MangoHud.
 - **Visual layout editor** — Drag-and-drop canvas that renders pixel-perfect with Pillow (same pipeline as the device). Font selection, color picker, gradients, stroke, arc/linear bars, z-order, layer locking.
 - **Backgrounds** — Solid color, image, or looping video (MP4/AVI/MKV via OpenCV). Crop and position controls.
 - **Display modes** — Static (fixed layout), rotative (cycle with transitions), reactive (auto-switch by foreground app).
@@ -154,7 +154,7 @@ The visual editor is a three-panel window:
 
 ### Transitions (rotative & reactive)
 
-`fade` · `swipe_left` · `swipe_right` · `swipe_up` · `swipe_down` · `none`
+`random` · `fade` · `dissolve` · `zoom_in` · `zoom_out` · `swipe_left/right/up/down` · `wipe_left/right/up/down` · `iris_circle` · `iris_box` · `blinds_horizontal/vertical` · `checkerboard` · `none`
 
 Configurable duration (0.1–3.0 s).
 
@@ -171,7 +171,7 @@ Configurable duration (0.1–3.0 s).
 | **GPU** | `gpu.name`, `gpu.percent`, `gpu.temp`, `gpu.mem_gb`, `gpu.mem_total_gb`, `gpu.mem_percent`, `gpu.clock_mhz`, `gpu.mem_clock_mhz`, `gpu.fan`, `gpu.power_w` | NVIDIA (pynvml) |
 | **System** | `sys.uptime_h`, `sys.clock`, `sys.date`, `sys.battery` | All |
 | **Foreground** | `app.process`, `app.window_title` | Windows (ctypes); Linux partial (xdotool, X11) |
-| **FPS** | `fps.current` | Windows (RTSS / MSI Afterburner shared memory) |
+| **FPS** | `fps.current`, `sys.fps` | Windows (RTSS / MSI Afterburner shared memory), Linux (MangoHud logs) |
 
 > `sys.clock` and `sys.date` are real-time sensors — they update every frame, not at the sensor poll rate.
 
@@ -197,7 +197,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 | CPU turbo freq | ⚠️ Fallback to `psutil.cpu_freq()` (no PDH on Linux) |
 | GPU (NVIDIA) | ✅ pynvml (requires NVIDIA driver) |
 | Foreground app | ⚠️ X11 only (xdotool); Wayland not yet supported |
-| FPS sensor | ❌ RTSS is Windows-only |
+| FPS sensor | ✅ MangoHud logs |
 | System tray | ⚠️ GNOME requires [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) |
 
 ## Architecture
@@ -223,7 +223,7 @@ turzx/
 │   ├── network.py     # Network throughput (delta-based)
 │   ├── system.py      # Uptime, clock, date, battery
 │   ├── foreground.py  # Active window title & process name
-│   ├── fps.py         # Game FPS via RTSS shared memory
+│   ├── fps.py         # Game FPS via RTSS shared memory / MangoHud logs
 │   └── units.py       # Unit conversion tables
 └── ui/
     ├── main_window.py # Three-panel config window (editor + properties + layout list)
