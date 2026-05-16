@@ -705,7 +705,7 @@ class Renderer:
         direction = el.bar_direction or "right"
 
         # Background
-        bg_col = tuple(el.bar_bg_color[:3]) + (255,)
+        bg_col = tuple(el.bar_bg_color[:3])
         draw.rectangle([el.x, el.y, el.x + w - 1, el.y + h - 1], fill=bg_col)
 
         # Foreground (filled portion)
@@ -762,7 +762,7 @@ class Renderer:
                     )
                     canvas.paste(fg, (fx, fy), fg)
             else:
-                fg_col = tuple(el.bar_fg_color[:3]) + (255,)
+                fg_col = tuple(el.bar_fg_color[:3])
                 draw.rectangle([fx, fy, fx2, fy2], fill=fg_col)
 
         # Border

@@ -7,6 +7,7 @@ and toolbox.  The canvas shows real PIL-rendered output.
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
+from ..autostart import is_enabled as autostart_is_enabled, enable as autostart_enable, disable as autostart_disable
 from ..config import (
     Layout,
     LayoutElement,
@@ -1026,6 +1028,13 @@ class ConfigWindow(QMainWindow):
         rotgl.addWidget(self._combo_rotation)
         ll.addWidget(rotg)
 
+        # Startup
+        stg = QGroupBox(_("Startup"))
+        stgl = QVBoxLayout(stg)
+        self._chk_autostart = QCheckBox(_("Run TURZX at system startup"))
+        stgl.addWidget(self._chk_autostart)
+        ll.addWidget(stg)
+
         # Add element buttons
         ag = QGroupBox(_("Add Element"))
         agl = QVBoxLayout(ag)
@@ -1112,6 +1121,9 @@ class ConfigWindow(QMainWindow):
             self._on_mode_layout_switched
         )
 
+        # startup
+        self._chk_autostart.toggled.connect(self._on_autostart_toggled)
+
     # ── Layout management ──
 
     def _load_layout(self):
@@ -1153,6 +1165,11 @@ class ConfigWindow(QMainWindow):
         self._load_mode_ui()
         self._dirty = False
         self._update_title()
+
+        # Startup checkbox state
+        self._chk_autostart.blockSignals(True)
+        self._chk_autostart.setChecked(autostart_is_enabled())
+        self._chk_autostart.blockSignals(False)
 
     def _on_layout_changed(self, name: str):
         if self._dirty:
@@ -1289,6 +1306,13 @@ class ConfigWindow(QMainWindow):
         else:
             mc.pause()
         self._sync_pause_button()
+
+    def _on_autostart_toggled(self, checked: bool) -> None:
+        """Enable or disable autostart on system boot."""
+        if checked:
+            autostart_enable()
+        else:
+            autostart_disable()
 
     def _sync_pause_button(self) -> None:
         """Sync pause button text/state with mode controller."""
@@ -1547,8 +1571,10 @@ class ConfigWindow(QMainWindow):
             self._scene.update_render_pixmap(pixmap)
             # Update native fps label (refreshes once the video is actually opened)
             self._update_native_fps_label()
-        except Exception:
-            pass
+        except Exception as e:
+            import traceback
+            print(f"[TURZX] Canvas render error: {e}", file=sys.stderr)
+            traceback.print_exc()
 
     def _on_layout_modified(self) -> None:
         """Layout structure changed (drag, add, remove) — mark dirty + re-render."""

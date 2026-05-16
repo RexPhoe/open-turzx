@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -208,7 +209,14 @@ class TurzxDaemon(QObject):
         self._settings_window = None
 
         self.mode_controller = ModeController(self.config)
-        self.tray = TurzxTray(self)
+        
+        # Tray is only available if a display server is present
+        self._headless = (
+            sys.platform in ("linux", "linux2")
+            and not os.environ.get("DISPLAY")
+            and not os.environ.get("WAYLAND_DISPLAY")
+        )
+        self.tray = TurzxTray(self) if not self._headless else None
 
     @property
     def is_running(self) -> bool:
@@ -218,7 +226,10 @@ class TurzxDaemon(QObject):
 
     def start(self) -> None:
         """Show tray, connect device, begin rendering."""
-        self.tray.show()
+        if self.tray:
+            self.tray.show()
+        else:
+            print("[TURZX] Running in headless mode (no display server detected)")
         self._connect_device()
         self.start_render()
 
@@ -237,10 +248,16 @@ class TurzxDaemon(QObject):
             dev.connect()
             dev.init_sequence()
             self.device = dev
-            self.tray.showMessage("TURZX", "Device connected", self.tray.icon())
+            msg = "Device connected"
+            print(f"[TURZX] {msg}")
+            if self.tray:
+                self.tray.showMessage("TURZX", msg, self.tray.icon())
         except Exception as e:
             self.device = None
-            self.tray.showMessage("TURZX", f"Device not found: {e}", self.tray.icon())
+            msg = f"Device not found: {e}"
+            print(f"[TURZX] {msg}")
+            if self.tray:
+                self.tray.showMessage("TURZX", msg, self.tray.icon())
 
     def _disconnect_device(self) -> None:
         if self.device:
@@ -296,6 +313,16 @@ class TurzxDaemon(QObject):
 
 
 def main() -> None:
+    # Linux: Detect if running with a display server or headless
+    # Use offscreen platform if no display is available
+    if sys.platform == "linux" or sys.platform == "linux2":
+        has_display = bool(os.environ.get("DISPLAY")) or bool(
+            os.environ.get("WAYLAND_DISPLAY")
+        )
+        if not has_display:
+            # Try to use offscreen platform for headless operation
+            os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("TURZX")

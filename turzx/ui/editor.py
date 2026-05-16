@@ -18,6 +18,7 @@ from PySide6.QtGui import (
     QPen,
     QBrush,
     QPainter,
+    QPainterPath,
     QPixmap,
     QImage,
 )
@@ -312,6 +313,13 @@ class EditorScene(QGraphicsScene):
     element_selected = Signal(object)  # LayoutElement | None
     layout_modified = Signal()
 
+    # Circular mask constants (screen is round, visible area is 420px diameter)
+    MASK_CENTER = (SCREEN_W / 2, SCREEN_H / 2)
+    MASK_RADIUS = 210
+    MASK_DIM_COLOR = QColor(0, 0, 0, 110)
+    MASK_RING_COLOR = QColor(255, 255, 255, 70)
+    MASK_RING_WIDTH = 2.5
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setSceneRect(0, 0, SCREEN_W, SCREEN_H)
@@ -327,6 +335,33 @@ class EditorScene(QGraphicsScene):
 
         self.setBackgroundBrush(QBrush(QColor(15, 15, 25)))
         self.selectionChanged.connect(self._on_selection)
+
+    def drawForeground(self, painter: QPainter, rect: QRectF) -> None:
+        """Draw circular mask showing the actual visible area of the round screen."""
+        super().drawForeground(painter, rect)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Dim the area outside the visible circle
+        cx, cy = self.MASK_CENTER
+        r = self.MASK_RADIUS
+        outer = QRectF(0, 0, SCREEN_W, SCREEN_H)
+        inner = QRectF(cx - r, cy - r, r * 2, r * 2)
+
+        path = QPainterPath()
+        path.addRect(outer)
+        path.addEllipse(inner)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.MASK_DIM_COLOR))
+        painter.drawPath(path)
+
+        # Thin ring at the circle boundary for a clear edge
+        painter.setPen(QPen(self.MASK_RING_COLOR, self.MASK_RING_WIDTH))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(inner)
+
+        painter.restore()
 
     # ── layout management ──
 

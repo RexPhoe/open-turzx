@@ -1,16 +1,23 @@
 """
-turzx/sensors/fps.py — Game FPS via RTSS (RivaTuner Statistics Server) shared memory
+turzx/sensors/fps.py — Game FPS via RTSS shared memory (Windows) or MangoHud (Linux)
 =====================================================================================
-Reads real-time FPS from the foreground application when RTSS is running.
-RTSS is bundled with MSI Afterburner and is the de-facto standard for in-game
-FPS monitoring. No admin privileges required.
+Windows: reads real-time FPS from RTSS (RivaTuner Statistics Server) shared memory.
+Linux: reads FPS from MangoHud log files or shared memory.
 
-If RTSS is not running, the sensor silently produces no readings.
+If no FPS source is detected, the sensor silently produces no readings.
+
+Linux usage: install mangohud and configure it to write benchmark logs
+  MANGOHUD_CONFIG=fps_only,log_interval=100,autostart_log,output_file=/tmp/turzx_fps.log
+Or TURZX will auto-detect MangoHud benchmark logs in ~/mangohud_logs/ and /tmp/.
 """
 
 from __future__ import annotations
 
+import csv
+import os
 import sys
+import time
+from pathlib import Path
 
 from .base import SensorBackend, SensorReading
 
@@ -133,21 +140,186 @@ def _parse_rtss_view(view: int, fg_pid: int) -> float:
     return best_fps
 
 
+# ── Linux MangoHud FPS ─────────────────────────────────────────────
+
+
+def _read_mangohud_fps() -> tuple[bool, float]:
+    """Read FPS from MangoHud on Linux.
+
+    Tries multiple methods:
+    1. MangoHud log file (CSV benchmark) — most reliable
+    2. MangoHud shared memory — fallback
+
+    Returns (mangohud_available, fps).
+    """
+    fps = _read_mangohud_log()
+    if fps > 0:
+        return True, fps
+
+    fps = _read_mangohud_shm()
+    if fps > 0:
+        return True, fps
+
+    # MangoHud might be running but no 3D app active, or logs not found
+    if _mangohud_is_running():
+        return True, 0.0
+
+    return False, 0.0
+
+
+def _read_mangohud_log() -> float:
+    """Parse MangoHud benchmark log for latest FPS value.
+
+    MangoHud benchmark logs are CSV files with headers like:
+        frametime,fps,cpu_load,...
+        16.6,60.2,45,...
+
+    Search paths (in order): TURZX's dedicated path, MangoHud's default dir, /tmp.
+    """
+    log_candidates: list[Path] = []
+
+    # Dedicated TURZX FPS log file (user-configured)
+    dedicated = Path("/tmp/turzx_fps.log")
+    if dedicated.exists():
+        log_candidates.append(dedicated)
+
+    # MangoHud default log directory
+    mangohud_dir = Path.home() / "mangohud_logs"
+    if mangohud_dir.is_dir():
+        try:
+            for f in sorted(mangohud_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.suffix == ".csv" and f.stat().st_size > 0:
+                    log_candidates.append(f)
+                    break
+        except OSError:
+            pass
+
+    # Additional /tmp paths
+    for tmp_name in ["mangohud_fps.log", "mangohud.csv"]:
+        p = Path("/tmp") / tmp_name
+        if p.exists():
+            log_candidates.append(p)
+
+    for log_path in log_candidates:
+        try:
+            fps = _parse_mangohud_csv(log_path)
+            if fps > 0:
+                return fps
+        except Exception:
+            continue
+
+    return 0.0
+
+
+def _parse_mangohud_csv(path: Path, max_age_seconds: int = 5) -> float:
+    """Parse a MangoHud CSV log and return the latest FPS value.
+
+    Only considers entries written in the last max_age_seconds.
+    Expects CSV with headers containing 'fps' column.
+    """
+    if not path.exists():
+        return 0.0
+
+    file_age = time.time() - path.stat().st_mtime
+    if file_age > max_age_seconds:
+        return 0.0
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames is None:
+                return 0.0
+
+            fps_col = None
+            for col in reader.fieldnames:
+                if col.strip().lower() == "fps":
+                    fps_col = col
+                    break
+
+            if fps_col is None:
+                return 0.0
+
+            last_fps = 0.0
+            for row in reader:
+                try:
+                    last_fps = float(row[fps_col])
+                except (ValueError, KeyError):
+                    continue
+
+            return last_fps
+    except Exception:
+        return 0.0
+
+
+def _read_mangohud_shm() -> float:
+    """Try to read FPS from MangoHud shared memory.
+
+    Some MangoHud versions create POSIX shared memory segments.
+    """
+    try:
+        import mmap
+
+        shm_names = ["mangohud_fps", "MangoHudSM", "mangohud-sm"]
+        for name in shm_names:
+            shm_path = Path("/dev/shm") / name
+            if not shm_path.exists():
+                continue
+            # Try opening via shm_open-like mechanism
+            try:
+                fd = os.open(f"/dev/shm/{name}", os.O_RDONLY)
+                try:
+                    data = mmap.mmap(fd, 4096, access=mmap.ACCESS_READ)
+                    # Simple format: first 4 bytes = fps as float
+                    value = float(int.from_bytes(data[0:4], "little", signed=True))
+                    if 0 < value < 1000:
+                        return value
+                finally:
+                    os.close(fd)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return 0.0
+
+
+def _mangohud_is_running() -> bool:
+    """Check if any process has MangoHud loaded via /proc/*/maps."""
+    try:
+        for proc_dir in Path("/proc").iterdir():
+            if not proc_dir.name.isdigit():
+                continue
+            maps_path = proc_dir / "maps"
+            if not maps_path.exists():
+                continue
+            try:
+                with open(maps_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read(65536)  # read first 64KB
+                    if "mangohud" in content.lower() or "libMangoHud" in content:
+                        return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
 class FpsSensor(SensorBackend):
-    """Reads game FPS via RTSS shared memory (MSI Afterburner / RTSS)."""
+    """Reads game FPS via RTSS (Windows) or MangoHud (Linux)."""
 
     def read(self) -> list[SensorReading]:
-        if sys.platform != "win32":
-            return []
+        fps: float = 0.0
 
-        try:
-            available, fps = _read_rtss_fps()
-        except Exception:
-            return []
+        if sys.platform == "win32":
+            try:
+                _, fps = _read_rtss_fps()
+            except Exception:
+                pass
+        elif sys.platform.startswith("linux"):
+            try:
+                _, fps = _read_mangohud_fps()
+            except Exception:
+                pass
 
-        if not available:
-            return []
-
-        # Always report the sensor so it shows in the sensor list.
-        # Shows 0 if RTSS is running but no 3D app is active.
+        # Always report the sensor so it appears in the sensor list.
+        # Shows 0 when no FPS source is detected / no 3D app is active.
         return [SensorReading("sys.fps", "Game FPS", round(fps), "FPS", "system")]
