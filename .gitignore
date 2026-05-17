@@ -26,5 +26,9 @@ desktop.ini
 # TURZX config (user-specific, stored in APPDATA/XDG)
 # configs/ directory is for development defaults only
 
+# Local video backgrounds for playback testing
+assets/videos/*
+!assets/videos/README.md
+
 # Claude Code
 .claude/
