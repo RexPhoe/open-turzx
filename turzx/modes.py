@@ -124,13 +124,13 @@ class ModeController(QObject):
         if not mc.reactive.rules:
             return
 
-        process = self._get_foreground_process()
-        if not process:
+        candidates = self._get_foreground_app_candidates()
+        if not candidates:
             return
 
-        proc_lower = process.lower()
+        candidate_set = {c.lower() for c in candidates if c}
         for rule in mc.reactive.rules:
-            if rule.process.lower() == proc_lower:
+            if rule.process.lower() in candidate_set:
                 if rule.layout != self._config.active_name:
                     available = self._config.list_layouts()
                     if rule.layout in available:
@@ -146,15 +146,18 @@ class ModeController(QObject):
                 self._config.set_active(fallback)
                 self.layout_switched.emit(fallback)
 
-    def _get_foreground_process(self) -> str:
-        """Read foreground process name from cached sensor values."""
+    def _get_foreground_app_candidates(self) -> list[str]:
+        """Read foreground app identifiers from cached sensor values."""
         if self._sensor_source is None:
-            return ""
+            return []
         try:
             values = self._sensor_source()
-            reading = values.get("app.process")
-            if reading is not None:
-                return str(reading.value)
+            result = []
+            for sensor_id in ("app.process", "app.window_class"):
+                reading = values.get(sensor_id)
+                if reading is not None and str(reading.value):
+                    result.append(str(reading.value))
+            return result
         except Exception:
             pass
-        return ""
+        return []

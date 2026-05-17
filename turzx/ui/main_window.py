@@ -37,12 +37,15 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QInputDialog,
     QMessageBox,
+    QTableWidget,
+    QTableWidgetItem,
 )
 
 from ..autostart import is_enabled as autostart_is_enabled, enable as autostart_enable, disable as autostart_disable
 from ..config import (
     Layout,
     LayoutElement,
+    SensorStyleRule,
     Background,
     ModeConfig,
     ReactiveRule,
@@ -187,6 +190,19 @@ class PropertiesPanel(QScrollArea):
         sf.addRow(_("Format:"), self._ed_fmt)
         self._cb_unit = QComboBox()
         sf.addRow(_("Unit:"), self._cb_unit)
+        self._tbl_sensor_rules = QTableWidget(0, 3)
+        self._tbl_sensor_rules.setHorizontalHeaderLabels([_("Min"), _("Color"), _("Size")])
+        self._tbl_sensor_rules.setToolTip(_("Threshold styles: color is R,G,B and applies from Min upward."))
+        self._tbl_sensor_rules.setMinimumHeight(110)
+        sf.addRow(_("Value styles:"), self._tbl_sensor_rules)
+        rules_row = QWidget()
+        rules_l = QHBoxLayout(rules_row)
+        rules_l.setContentsMargins(0, 0, 0, 0)
+        self._btn_rule_add = QPushButton(_("Add"))
+        self._btn_rule_remove = QPushButton(_("Remove"))
+        rules_l.addWidget(self._btn_rule_add)
+        rules_l.addWidget(self._btn_rule_remove)
+        sf.addRow("", rules_row)
         eg.addWidget(self._w_sensor)
 
         # -- image fields --
@@ -246,6 +262,11 @@ class PropertiesPanel(QScrollArea):
         self._sp_bar_thick.setRange(1, 100)
         self._sp_bar_thick.setValue(8)
         brf.addRow(_("Thickness:"), self._sp_bar_thick)
+        self._sp_bar_radius = QSpinBox()
+        self._sp_bar_radius.setRange(0, 100)
+        self._sp_bar_radius.setValue(0)
+        self._sp_bar_radius.setToolTip(_("0 = square corners/caps"))
+        brf.addRow(_("Radius:"), self._sp_bar_radius)
         # Direction (bar only, not arc_bar)
         self._w_bar_dir = QWidget()
         bdf = QFormLayout(self._w_bar_dir)
@@ -450,6 +471,10 @@ class PropertiesPanel(QScrollArea):
         self._ed_label.textChanged.connect(self._on_elem)
         self._ed_fmt.textChanged.connect(self._on_elem)
         self._cb_unit.currentTextChanged.connect(self._on_elem)
+        self._tbl_sensor_rules.itemChanged.connect(self._on_elem)
+        self._tbl_sensor_rules.cellDoubleClicked.connect(self._pick_sensor_rule_color)
+        self._btn_rule_add.clicked.connect(self._add_sensor_rule)
+        self._btn_rule_remove.clicked.connect(self._remove_sensor_rule)
         self._ed_img.textChanged.connect(self._on_elem)
         self._btn_color.color_changed.connect(self._on_elem)
         self._cb_anchor.currentTextChanged.connect(self._on_elem)
@@ -483,6 +508,7 @@ class PropertiesPanel(QScrollArea):
         self._btn_bar_fg2.color_changed.connect(self._on_elem)
         self._sp_bar_max.valueChanged.connect(self._on_elem)
         self._sp_bar_thick.valueChanged.connect(self._on_elem)
+        self._sp_bar_radius.valueChanged.connect(self._on_elem)
         self._cb_bar_dir.currentTextChanged.connect(self._on_elem)
 
         # Arc signals
@@ -540,6 +566,78 @@ class PropertiesPanel(QScrollArea):
             self._cb_unit.addItems(units)
         self._cb_unit.blockSignals(False)
 
+    def _populate_sensor_rules(self, rules: list[SensorStyleRule]) -> None:
+        self._tbl_sensor_rules.blockSignals(True)
+        self._tbl_sensor_rules.setRowCount(0)
+        for rule in sorted(rules, key=lambda r: r.min_value):
+            row = self._tbl_sensor_rules.rowCount()
+            self._tbl_sensor_rules.insertRow(row)
+            self._tbl_sensor_rules.setItem(row, 0, QTableWidgetItem(str(rule.min_value)))
+            self._tbl_sensor_rules.setItem(
+                row, 1, QTableWidgetItem(",".join(str(c) for c in rule.color[:3]))
+            )
+            self._tbl_sensor_rules.setItem(row, 2, QTableWidgetItem(str(rule.font_size)))
+        self._tbl_sensor_rules.blockSignals(False)
+
+    def _read_sensor_rules(self) -> list[SensorStyleRule]:
+        rules: list[SensorStyleRule] = []
+        for row in range(self._tbl_sensor_rules.rowCount()):
+            try:
+                min_item = self._tbl_sensor_rules.item(row, 0)
+                color_item = self._tbl_sensor_rules.item(row, 1)
+                size_item = self._tbl_sensor_rules.item(row, 2)
+                min_value = float(min_item.text()) if min_item else 0.0
+                color_text = color_item.text() if color_item else "255,255,255"
+                color = [max(0, min(255, int(v.strip()))) for v in color_text.split(",")[:3]]
+                while len(color) < 3:
+                    color.append(255)
+                font_size = int(size_item.text()) if size_item else 16
+                rules.append(
+                    SensorStyleRule(
+                        min_value=min_value,
+                        color=color,
+                        font_size=max(6, min(120, font_size)),
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+        return sorted(rules, key=lambda r: r.min_value)
+
+    def _add_sensor_rule(self) -> None:
+        if self._updating:
+            return
+        row = self._tbl_sensor_rules.rowCount()
+        self._tbl_sensor_rules.insertRow(row)
+        self._tbl_sensor_rules.setItem(row, 0, QTableWidgetItem("0"))
+        self._tbl_sensor_rules.setItem(row, 1, QTableWidgetItem("255,255,255"))
+        self._tbl_sensor_rules.setItem(row, 2, QTableWidgetItem("16"))
+        self._on_elem()
+
+    def _remove_sensor_rule(self) -> None:
+        if self._updating:
+            return
+        row = self._tbl_sensor_rules.currentRow()
+        if row >= 0:
+            self._tbl_sensor_rules.removeRow(row)
+            self._on_elem()
+
+    def _pick_sensor_rule_color(self, row: int, column: int) -> None:
+        if column != 1 or self._updating:
+            return
+        item = self._tbl_sensor_rules.item(row, column)
+        try:
+            rgb = [int(v.strip()) for v in (item.text() if item else "").split(",")[:3]]
+        except ValueError:
+            rgb = [255, 255, 255]
+        while len(rgb) < 3:
+            rgb.append(255)
+        c = QColorDialog.getColor(QColor(*rgb[:3]), self.window())
+        if c.isValid():
+            self._tbl_sensor_rules.setItem(
+                row, column, QTableWidgetItem(f"{c.red()},{c.green()},{c.blue()}")
+            )
+            self._on_elem()
+
     # ── public API ──
 
     def set_element(self, element: LayoutElement | None) -> None:
@@ -592,6 +690,7 @@ class PropertiesPanel(QScrollArea):
                         self._cb_unit.setCurrentIndex(uidx)
                 else:
                     self._cb_unit.setCurrentIndex(0)  # (native)
+                self._populate_sensor_rules(element.sensor_style_rules)
             elif is_i:
                 self._ed_img.setText(element.text)
             elif is_sh:
@@ -613,6 +712,7 @@ class PropertiesPanel(QScrollArea):
                 self._btn_bar_fg2.set_color(element.bar_fg_color2)
                 self._sp_bar_max.setValue(int(element.bar_max))
                 self._sp_bar_thick.setValue(element.bar_thickness)
+                self._sp_bar_radius.setValue(element.bar_corner_radius)
             if is_bar:
                 idx = self._cb_bar_dir.findText(element.bar_direction or "right")
                 if idx >= 0:
@@ -710,6 +810,7 @@ class PropertiesPanel(QScrollArea):
             # Unit: "(native)" or empty means use native unit
             unit_text = self._cb_unit.currentText()
             el.display_unit = "" if unit_text == "(native)" else unit_text
+            el.sensor_style_rules = self._read_sensor_rules()
         elif el.type == "image":
             el.text = self._ed_img.text()
         elif el.type == "shape":
@@ -724,6 +825,7 @@ class PropertiesPanel(QScrollArea):
             el.bar_fg_color2 = self._btn_bar_fg2.get_color()
             el.bar_max = float(self._sp_bar_max.value())
             el.bar_thickness = self._sp_bar_thick.value()
+            el.bar_corner_radius = self._sp_bar_radius.value()
         if el.type == "bar":
             el.bar_direction = self._cb_bar_dir.currentText()
         if el.type == "arc_bar":

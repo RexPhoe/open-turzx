@@ -30,7 +30,7 @@ def _default_config_dir() -> Path:
 
 # ── Data models ──
 
-_DEFAULT_LAYOUT_VERSION = 6  # bump when default_layout() changes
+_DEFAULT_LAYOUT_VERSION = 7  # bump when default_layout() changes
 
 
 @dataclass
@@ -49,6 +49,22 @@ class Background:
 
     @classmethod
     def from_dict(cls, d: dict) -> Background:
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class SensorStyleRule:
+    """Visual style override activated when sensor value reaches min_value."""
+
+    min_value: float = 0.0
+    color: list[int] = field(default_factory=lambda: [255, 255, 255])
+    font_size: int = 16
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> SensorStyleRule:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
@@ -80,6 +96,7 @@ class LayoutElement:
     stroke_color: list[int] = field(default_factory=lambda: [0, 0, 0])
     # unit conversion (sensor elements only)
     display_unit: str = ""  # empty = use sensor's native unit
+    sensor_style_rules: list[SensorStyleRule] = field(default_factory=list)
     # shape
     shape: str = "rect"  # "rect", "circle", "ellipse", "line"
     fill_color: list[int] = field(default_factory=lambda: [255, 255, 255])
@@ -94,15 +111,23 @@ class LayoutElement:
     bar_direction: str = "right"  # "right", "left", "down", "up"
     bar_start_angle: int = 135  # start angle for arc (degrees, 0=right, CCW)
     bar_sweep_angle: int = 270  # total arc sweep (degrees)
+    bar_corner_radius: int = 0  # 0 = square caps/corners; >0 = rounded
     # lock
     locked: bool = False  # if True, element cannot be dragged in editor
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        data["sensor_style_rules"] = [r.to_dict() for r in self.sensor_style_rules]
+        return data
 
     @classmethod
     def from_dict(cls, d: dict) -> LayoutElement:
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        data = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        data["sensor_style_rules"] = [
+            SensorStyleRule.from_dict(r) if isinstance(r, dict) else SensorStyleRule()
+            for r in data.get("sensor_style_rules", [])
+        ]
+        return cls(**data)
 
 
 @dataclass

@@ -20,6 +20,7 @@ import os
 import sys
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
@@ -578,6 +579,8 @@ class Renderer:
         elif el.display_unit and isinstance(value, (int, float)):
             value, unit = convert_unit(value, reading.unit, el.display_unit)
 
+        numeric_value = value if isinstance(value, (int, float)) else None
+
         try:
             text = el.format.format(
                 label=el.label or reading.name,
@@ -587,7 +590,28 @@ class Renderer:
         except (KeyError, ValueError):
             text = f"{el.label}: {value}{unit}"
 
-        self._render_text_on(canvas, draw, text, el)
+        self._render_text_on(canvas, draw, text, self._sensor_styled_element(el, numeric_value))
+
+    def _sensor_styled_element(
+        self, el: LayoutElement, value: float | int | None
+    ) -> LayoutElement:
+        """Return element with the highest matching threshold style applied."""
+        if value is None or not el.sensor_style_rules:
+            return el
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return el
+
+        active = None
+        for rule in sorted(el.sensor_style_rules, key=lambda r: r.min_value):
+            if numeric >= rule.min_value:
+                active = rule
+            else:
+                break
+        if active is None:
+            return el
+        return replace(el, color=list(active.color[:3]), font_size=active.font_size)
 
     def _draw_image(self, canvas: Image.Image, el: LayoutElement) -> None:
         try:
@@ -704,9 +728,18 @@ class Renderer:
         pct = self._get_sensor_pct(el, values)
         direction = el.bar_direction or "right"
 
+        radius = max(0, min(el.bar_corner_radius, w // 2, h // 2))
+
+        rounded_mask = self._rounded_rect_mask(w, h, radius) if radius > 0 else None
+
         # Background
         bg_col = tuple(el.bar_bg_color[:3])
-        draw.rectangle([el.x, el.y, el.x + w - 1, el.y + h - 1], fill=bg_col)
+        bg_box = [el.x, el.y, el.x + w - 1, el.y + h - 1]
+        if rounded_mask is not None:
+            bg_layer = Image.new("RGBA", (w, h), bg_col + (255,))
+            canvas.paste(bg_layer, (el.x, el.y), rounded_mask)
+        else:
+            draw.rectangle(bg_box, fill=bg_col)
 
         # Foreground (filled portion)
         if direction == "right":
@@ -749,29 +782,103 @@ class Renderer:
                 grad_angle = 0
 
         if fw > 0:
+            gw = fx2 - fx + 1
+            gh = fy2 - fy + 1
             if el.bar_fg_gradient:
-                gw = fx2 - fx + 1
-                gh = fy2 - fy + 1
-                if gw > 0 and gh > 0:
-                    fg = _make_gradient(
-                        gw,
-                        gh,
-                        tuple(el.bar_fg_color),
-                        tuple(el.bar_fg_color2),
-                        grad_angle,
-                    )
-                    canvas.paste(fg, (fx, fy), fg)
+                fill_mask = self._bar_fill_mask(
+                    w, h, rounded_mask, fx - el.x, fy - el.y, gw, gh
+                )
+                fg_layer = _make_gradient(
+                    w,
+                    h,
+                    tuple(el.bar_fg_color),
+                    tuple(el.bar_fg_color2),
+                    grad_angle,
+                )
+                canvas.paste(fg_layer, (el.x, el.y), fill_mask)
             else:
                 fg_col = tuple(el.bar_fg_color[:3])
-                draw.rectangle([fx, fy, fx2, fy2], fill=fg_col)
+                if rounded_mask is not None:
+                    fill_mask = self._bar_fill_mask(
+                        w, h, rounded_mask, fx - el.x, fy - el.y, gw, gh
+                    )
+                    fill_layer = Image.new("RGBA", (w, h), fg_col + (255,))
+                    canvas.paste(fill_layer, (el.x, el.y), fill_mask)
+                else:
+                    draw.rectangle([fx, fy, fx2, fy2], fill=fg_col)
 
         # Border
         if el.stroke_width > 0:
-            draw.rectangle(
-                [el.x, el.y, el.x + w - 1, el.y + h - 1],
-                outline=tuple(el.stroke_color),
-                width=el.stroke_width,
-            )
+            if radius > 0:
+                draw.rounded_rectangle(
+                    bg_box,
+                    radius=radius,
+                    outline=tuple(el.stroke_color),
+                    width=el.stroke_width,
+                )
+            else:
+                draw.rectangle(bg_box, outline=tuple(el.stroke_color), width=el.stroke_width)
+
+    def _rounded_rect_mask(self, w: int, h: int, radius: int) -> Image.Image:
+        mask = Image.new("L", (w, h), 0)
+        md = ImageDraw.Draw(mask)
+        md.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
+        return mask
+
+    def _bar_fill_mask(
+        self,
+        w: int,
+        h: int,
+        rounded_mask: Image.Image | None,
+        x: int,
+        y: int,
+        fill_w: int,
+        fill_h: int,
+    ) -> Image.Image:
+        fill_mask = Image.new("L", (w, h), 0)
+        md = ImageDraw.Draw(fill_mask)
+        md.rectangle([x, y, x + fill_w - 1, y + fill_h - 1], fill=255)
+        if rounded_mask is None:
+            return fill_mask
+        return Image.composite(fill_mask, Image.new("L", (w, h), 0), rounded_mask)
+
+    def _draw_arc_cap(
+        self,
+        draw: ImageDraw.ImageDraw,
+        bbox: list[int],
+        angle: float,
+        color: int | tuple[int, int, int],
+        thickness: int,
+    ) -> None:
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+        # Pillow draws thick arcs inside the bbox; caps must sit on the stroke
+        # centerline, not on the outer ellipse, otherwise they drift outward.
+        rx = max(0.0, (bbox[2] - bbox[0] - thickness) / 2)
+        ry = max(0.0, (bbox[3] - bbox[1] - thickness) / 2)
+        a = math.radians(angle)
+        x = cx + rx * math.cos(a)
+        y = cy + ry * math.sin(a)
+        r = thickness / 2
+        draw.ellipse([x - r, y - r, x + r, y + r], fill=color)
+
+    def _arc_mask(
+        self,
+        w: int,
+        h: int,
+        start_angle: float,
+        end_angle: float,
+        thickness: int,
+        rounded: bool,
+    ) -> Image.Image:
+        mask = Image.new("L", (w, h), 0)
+        md = ImageDraw.Draw(mask)
+        bbox = [0, 0, w - 1, h - 1]
+        md.arc(bbox, start_angle, end_angle, fill=255, width=thickness)
+        if rounded:
+            self._draw_arc_cap(md, bbox, start_angle, 255, thickness)
+            self._draw_arc_cap(md, bbox, end_angle, 255, thickness)
+        return mask
 
     def _draw_arc_bar(
         self,
@@ -785,27 +892,41 @@ class Renderer:
         h = max(el.h, 20)
         pct = self._get_sensor_pct(el, values)
         thickness = max(el.bar_thickness, 2)
-
-        bbox = [el.x, el.y, el.x + w - 1, el.y + h - 1]
+        rounded = el.bar_corner_radius > 0
 
         # Background arc (full sweep)
         bg_col = tuple(el.bar_bg_color[:3])
-        draw.arc(
-            bbox,
+        bg_mask = self._arc_mask(
+            w,
+            h,
             el.bar_start_angle,
             el.bar_start_angle + el.bar_sweep_angle,
-            fill=bg_col,
-            width=thickness,
+            thickness,
+            rounded,
         )
+        bg_layer = Image.new("RGBA", (w, h), bg_col + (255,))
+        canvas.paste(bg_layer, (el.x, el.y), bg_mask)
 
         # Foreground arc (proportional to value)
         fg_sweep = int(el.bar_sweep_angle * pct)
         if fg_sweep > 0:
             fg_col = tuple(el.bar_fg_color[:3])
-            draw.arc(
-                bbox,
+            fg_mask = self._arc_mask(
+                w,
+                h,
                 el.bar_start_angle,
                 el.bar_start_angle + fg_sweep,
-                fill=fg_col,
-                width=thickness,
+                thickness,
+                rounded,
             )
+            if el.bar_fg_gradient:
+                fg_layer = _make_gradient(
+                    w,
+                    h,
+                    tuple(el.bar_fg_color),
+                    tuple(el.bar_fg_color2),
+                    el.gradient_angle,
+                )
+            else:
+                fg_layer = Image.new("RGBA", (w, h), fg_col + (255,))
+            canvas.paste(fg_layer, (el.x, el.y), fg_mask)

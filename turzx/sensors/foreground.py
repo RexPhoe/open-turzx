@@ -3,7 +3,7 @@ turzx/sensors/foreground.py — Foreground application sensor
 ============================================================
 Detects which window/application is currently in the foreground.
 Windows: uses win32gui (pywin32) or ctypes fallback.
-Linux: uses xdotool or /proc.
+Linux: uses Hyprland's hyprctl on Wayland, or xdotool on X11.
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ def _get_foreground_window_title() -> str:
     """Get the title of the foreground window."""
     if sys.platform == "win32":
         return _win32_foreground_title()
-    return _linux_foreground_title()
+    info = _linux_foreground_info()
+    return info.get("title", "")
 
 
 def _win32_foreground_title() -> str:
@@ -76,26 +77,93 @@ def _win32_foreground_process() -> str:
         return ""
 
 
-def _linux_foreground_title() -> str:
+def _process_name_from_pid(pid: int | str) -> str:
     try:
+        pid_text = str(pid).strip()
+        if not pid_text.isdigit():
+            return ""
+        with open(f"/proc/{pid_text}/comm", "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _hyprland_foreground_info() -> dict[str, str]:
+    """Return active window details on Hyprland/Wayland."""
+    try:
+        import json
         import subprocess
 
         result = subprocess.run(
+            ["hyprctl", "activewindow", "-j"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return {}
+        data = json.loads(result.stdout)
+        pid = str(data.get("pid") or "")
+        proc = _process_name_from_pid(pid)
+        window_class = str(data.get("class") or data.get("initialClass") or "")
+        return {
+            "title": str(data.get("title") or data.get("initialTitle") or ""),
+            "process": proc or window_class,
+            "class": window_class,
+            "pid": pid,
+        }
+    except Exception:
+        return {}
+
+
+def _x11_foreground_info() -> dict[str, str]:
+    """Return active window details on X11 via xdotool."""
+    try:
+        import subprocess
+
+        title_result = subprocess.run(
             ["xdotool", "getactivewindow", "getwindowname"],
             capture_output=True,
             text=True,
             timeout=1,
         )
-        return result.stdout.strip() if result.returncode == 0 else ""
+        pid_result = subprocess.run(
+            ["xdotool", "getactivewindow", "getwindowpid"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        pid = pid_result.stdout.strip() if pid_result.returncode == 0 else ""
+        return {
+            "title": title_result.stdout.strip() if title_result.returncode == 0 else "",
+            "process": _process_name_from_pid(pid),
+            "class": "",
+            "pid": pid,
+        }
     except Exception:
-        return ""
+        return {}
+
+
+def _linux_foreground_info() -> dict[str, str]:
+    """Return active app details using the best available Linux backend."""
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        info = _hyprland_foreground_info()
+        if info:
+            return info
+    return _x11_foreground_info()
+
+
+def _linux_foreground_process() -> str:
+    """Get the process name of the active Linux window."""
+    return _linux_foreground_info().get("process", "")
 
 
 class ForegroundSensor(SensorBackend):
     def read(self) -> list[SensorReading]:
         readings = []
+        linux_info = _linux_foreground_info() if sys.platform != "win32" else {}
 
-        title = _get_foreground_window_title()
+        title = _win32_foreground_title() if sys.platform == "win32" else linux_info.get("title", "")
         if title:
             # Truncate long titles for display
             display = title if len(title) <= 40 else title[:37] + "..."
@@ -107,5 +175,17 @@ class ForegroundSensor(SensorBackend):
             proc = _win32_foreground_process()
             if proc:
                 readings.append(SensorReading("app.process", "App", proc, "", "system"))
+        else:
+            proc = linux_info.get("process", "")
+            if proc:
+                readings.append(SensorReading("app.process", "App", proc, "", "system"))
+            window_class = linux_info.get("class", "")
+            if window_class:
+                readings.append(
+                    SensorReading("app.window_class", "App Class", window_class, "", "system")
+                )
+            pid = linux_info.get("pid", "")
+            if pid:
+                readings.append(SensorReading("app.pid", "App PID", pid, "", "system"))
 
         return readings
