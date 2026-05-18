@@ -334,9 +334,10 @@ def main() -> None:
             os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("TURZX")
     app.setApplicationDisplayName("TURZX Monitor")
+    app.setDesktopFileName("turzx")
+    app.setQuitOnLastWindowClosed(False)
 
     daemon = TurzxDaemon()
     daemon.start()

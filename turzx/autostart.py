@@ -27,6 +27,11 @@ def _desktop_path() -> Path:
     return _autostart_dir() / "turzx.desktop"
 
 
+def _applications_desktop_path() -> Path:
+    """Return the application desktop entry used by Qt/portal app id lookup."""
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "applications" / "turzx.desktop"
+
+
 def _exec_command() -> str:
     """Determine the best command to launch TURZX.
 
@@ -73,7 +78,7 @@ def enable() -> bool:
         except Exception:
             return False
     else:
-        return _create_linux_desktop_entry()
+        return _create_linux_desktop_entries()
 
 
 def disable() -> bool:
@@ -101,13 +106,15 @@ def disable() -> bool:
             return False
 
 
-def _create_linux_desktop_entry() -> bool:
-    """Create a .desktop file for XDG autostart."""
+def _create_linux_desktop_entries() -> bool:
+    """Create .desktop files for XDG autostart and Qt/portal app id lookup."""
     try:
         autostart_dir = _autostart_dir()
         autostart_dir.mkdir(parents=True, exist_ok=True)
+        applications_dir = _applications_desktop_path().parent
+        applications_dir.mkdir(parents=True, exist_ok=True)
 
-        desktop_content = f"""[Desktop Entry]
+        common_content = f"""[Desktop Entry]
 Type=Application
 Name=TURZX Monitor
 Comment=TURZX 2.8" USB Screen Monitor
@@ -115,12 +122,15 @@ Exec={_exec_command()}
 StartupNotify=false
 Terminal=false
 Categories=Utility;
-X-GNOME-Autostart-enabled=true
 """
+        autostart_content = common_content + "X-GNOME-Autostart-enabled=true\n"
 
         desktop_path = _desktop_path()
-        desktop_path.write_text(desktop_content, encoding="utf-8")
+        desktop_path.write_text(autostart_content, encoding="utf-8")
         desktop_path.chmod(0o755)
+        app_desktop_path = _applications_desktop_path()
+        app_desktop_path.write_text(common_content, encoding="utf-8")
+        app_desktop_path.chmod(0o755)
         return True
     except Exception:
         return False
