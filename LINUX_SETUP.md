@@ -33,12 +33,17 @@ shiboken6==6.11.1         # Binding Qt
 
 ## 🚀 Ejecución
 
-### Opción 1: Script Automático
+### Opción 1: Script Automático (recomendado)
 
 ```bash
 cd $HOME/repos/TURZX
-./run_turzx.sh
+./run_turzx.sh             # Inicia el daemon (icono en bandeja)
+./run_turzx_settings.sh    # Abre directamente el editor de ajustes
 ```
+
+Los scripts activan automáticamente el entorno virtual, esperan a que el sistema de bandeja
+esté listo (StatusNotifierWatcher en Hyprland/Waybar) y configuran el entorno correctamente.
+No requieren manipular manualmente variables de Qt o libusb.
 
 ### Opción 2: Línea de Comandos
 
@@ -268,9 +273,10 @@ Si MangoHud está corriendo pero no hay juego activo, mostrará **0 FPS**.
 
 TURZX incluye una opción en **Settings → Startup** para iniciar automáticamente al arrancar el sistema.
 
-Esto usa el estándar **XDG Autostart** (compatible con GNOME, KDE, XFCE y otros entornos):
-- Al activar: se crea `~/.config/autostart/turzx.desktop`
-- Al desactivar: se elimina el archivo
+Esto usa el estándar **XDG Autostart** (compatible con GNOME, KDE, XFCE, Hyprland y otros):
+- Al activar: se crea `~/.config/autostart/turzx.desktop` (arranque automático)
+- También se crea `~/.local/share/applications/turzx.desktop` (asociación de app ID para Qt/Wayland)
+- Al desactivar: se eliminan ambos archivos
 
 ### Configuración manual
 
@@ -279,9 +285,11 @@ Si prefieres gestionarlo manualmente, puedes crear `~/.config/autostart/turzx.de
 [Desktop Entry]
 Type=Application
 Name=TURZX Monitor
-Exec=/ruta/a/python -m turzx
+Comment=TURZX 2.8" USB Screen Monitor
+Exec=$HOME/repos/TURZX/run_turzx.sh
 StartupNotify=false
 Terminal=false
+Categories=Utility;
 X-GNOME-Autostart-enabled=true
 ```
 

@@ -66,6 +66,15 @@ pip install -e ".[gpu]"
 pip install -e ".[gpu,video]"
 ```
 
+### Quick Launch (Linux)
+
+The project includes bash launchers that handle the virtual environment and display server readiness:
+
+```bash
+./run_turzx.sh           # Start the daemon (tray icon)
+./run_turzx_settings.sh  # Open directly into the settings editor
+```
+
 > **Note:** If the device is not detected, you may need to install a WinUSB/libusb driver via [Zadig](https://zadig.akeo.ie/) or `pip install libusb`.
 
 ### Linux (Arch / Manjaro)
@@ -77,8 +86,8 @@ sudo pacman -S libusb python-pyusb python-pillow python-pycryptodome python-psut
 # Clone and install
 git clone https://github.com/YOUR_USER/turzx.git
 cd turzx
-python -m venv .venv --system-site-packages
-source .venv/bin/activate
+python -m venv turzx/.venv --system-site-packages
+source turzx/.venv/bin/activate
 pip install -e ".[gpu]"
 ```
 
@@ -88,8 +97,8 @@ pip install -e ".[gpu]"
 sudo apt install libusb-1.0-0-dev python3-venv
 git clone https://github.com/YOUR_USER/turzx.git
 cd turzx
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv turzx/.venv
+source turzx/.venv/bin/activate
 pip install -e ".[gpu]"
 ```
 
@@ -105,6 +114,13 @@ pip install -e ".[gpu]"
 
 ```bash
 # Run the daemon (system tray icon appears)
+./run_turzx.sh
+
+# Open settings directly
+./run_turzx_settings.sh
+
+# Or from the command line with the virtual environment:
+source turzx/.venv/bin/activate
 python -m turzx
 
 # Or, if installed via pip:

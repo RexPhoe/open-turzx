@@ -17,21 +17,16 @@ else
     exit 1
 fi
 
-# Detectar version de Python dinamicamente
-PY_VER=$("$VENV_DIR/bin/python" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-QT_PLUGINS="$VENV_DIR/lib/python${PY_VER}/site-packages/PySide6/Qt/plugins"
-QT_LIBS="$VENV_DIR/lib/python${PY_VER}/site-packages/PySide6/Qt/lib"
-
-# Configurar variables para Qt en Wayland
-if [ -d "$QT_PLUGINS" ]; then
-    export QT_QPA_PLATFORM_PLUGIN_PATH="$QT_PLUGINS"
-fi
-if [ -d "$QT_LIBS" ]; then
-    export LD_LIBRARY_PATH="$QT_LIBS:${LD_LIBRARY_PATH:-}"
-fi
+# Eliminar override de estilo Qt si interfiere con PySide6
 if [ "${QT_STYLE_OVERRIDE:-}" = "kvantum" ]; then
     unset QT_STYLE_OVERRIDE
 fi
+
+# PySide6 gestiona sus propias librerias y plugins Qt internamente.
+# NO establecer LD_LIBRARY_PATH o QT_QPA_PLATFORM_PLUGIN_PATH manualmente:
+# hacerlo fuerza al linker a cargar las librerias empaquetadas de PySide6
+# (ffmpeg, icu, qt) y puede causar conflictos con las del sistema que
+# se manifiestan como cuelgues al abrir ventanas Qt.
 
 # En Hyprland/Omarchy Waybar publica el watcher de bandeja unos segundos despues
 # del autostart. Si TURZX arranca antes, Qt no registra el icono y no hay ajustes.
