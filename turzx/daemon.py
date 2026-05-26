@@ -230,7 +230,7 @@ class TurzxDaemon(QObject):
         if self.tray:
             self.tray.show()
         else:
-            print("[TURZX] Running in headless mode (no display server detected)")
+            print("[Open-Turzx] Running in headless mode (no display server detected)")
         self._connect_device()
         self.start_render()
 
@@ -250,15 +250,15 @@ class TurzxDaemon(QObject):
             dev.init_sequence()
             self.device = dev
             msg = "Device connected"
-            print(f"[TURZX] {msg}")
+            print(f"[Open-Turzx] {msg}")
             if self.tray:
-                self.tray.showMessage("TURZX", msg, self.tray.icon())
+                self.tray.showMessage("Open-Turzx", msg, self.tray.icon())
         except Exception as e:
             self.device = None
             msg = f"Device not found: {e}"
-            print(f"[TURZX] {msg}")
+            print(f"[Open-Turzx] {msg}")
             if self.tray:
-                self.tray.showMessage("TURZX", msg, self.tray.icon())
+                self.tray.showMessage("Open-Turzx", msg, self.tray.icon())
 
     def _disconnect_device(self) -> None:
         if self.device:
@@ -296,7 +296,7 @@ class TurzxDaemon(QObject):
             self._render_thread = None
 
     def _on_render_error(self, msg: str) -> None:
-        print(f"[TURZX] Render error: {msg}", file=sys.stderr)
+        print(f"[Open-Turzx] Render error: {msg}", file=sys.stderr)
 
     # ── Settings window ──
 
@@ -311,11 +311,11 @@ class TurzxDaemon(QObject):
             self._settings_window.activateWindow()
         except Exception as exc:
             import traceback
-            print(f"[TURZX] Error opening settings: {exc}", file=sys.stderr)
+            print(f"[Open-Turzx] Error opening settings: {exc}", file=sys.stderr)
             traceback.print_exc()
             if self.tray:
                 self.tray.showMessage(
-                    "TURZX", f"Error opening settings: {exc}", self.tray.icon()
+                    "Open-Turzx", f"Error opening settings: {exc}", self.tray.icon()
                 )
 
 
@@ -333,10 +333,18 @@ def main() -> None:
             # Try to use offscreen platform for headless operation
             os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
+    # PySide6 ships only the Fusion and Windows styles; it does not include the
+    # Kvantum Qt plugin.  Desktop environments like Hyprland set
+    # QT_STYLE_OVERRIDE=kvantum globally, which makes Qt print:
+    #   "invalid style override 'kvantum' passed, ignoring it"
+    # Open-Turzx uses its own QSS dark theme and does not need system theming,
+    # so we neutralise the override before QApplication is constructed.
+    os.environ.pop("QT_STYLE_OVERRIDE", None)
+
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("TURZX")
-    app.setApplicationDisplayName("TURZX Monitor")
-    app.setDesktopFileName("turzx")
+    app.setApplicationName("Open-Turzx")
+    app.setApplicationDisplayName("Open-Turzx")
+    app.setDesktopFileName("open-turzx")
     app.setQuitOnLastWindowClosed(False)
 
     daemon = TurzxDaemon()

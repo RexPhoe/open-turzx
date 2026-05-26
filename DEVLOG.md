@@ -1,4 +1,4 @@
-# TURZX 2.8" — Development Log (Improvement Loop)
+# Open-Turzx — Development Log
 
 > Este archivo es el registro cronológico del proyecto.
 > Se actualiza en cada sesión de trabajo.
@@ -75,6 +75,103 @@ Avatar virtual animado que vive en la pantalla.
 - [ ] Reacciones a acciones del usuario
 - [ ] Sistema de emociones
 - [ ] Conexion con agente de IA para controlar comportamiento
+
+---
+
+## Sesión 2026-05-26 — FIX: FPS counter + Kvantum warning
+
+### Contexto
+- El contador de FPS dejó de funcionar: siempre mostraba 0 aunque MangoHud estuviera activo.
+- Al iniciar el programa aparecía un warning: `QApplication: invalid style override 'kvantum' passed`.
+
+### Diagnóstico FPS (tres capas)
+
+#### Capa 1 — Path mismatch (causa raíz)
+El código buscaba logs en `/tmp/open-turzx-logs/` pero **todos los juegos de Lutris**
+tienen configurado `output_folder=/tmp/turzx_logs` (sin el prefijo `open-`).
+El directorio `/tmp/turzx_logs/` nunca existía → MangoHud caía silenciosamente a `$HOME`.
+
+El código sí busca `$HOME` como fallback, pero eso solo funciona mientras el juego
+está activo (files ≤ 10 s de antigüedad). Cada reboot borraba el fallback histórico.
+
+#### Capa 2 — MangoHud sin `autostart_log`
+No existía `~/.config/MangoHud/MangoHud.conf`. MangoHud mostraba el overlay en pantalla
+pero **no escribía logs** sin `autostart_log`. Los CSVs del 16 de mayo se crearon manualmente
+(F2 o config temporal ya no presente).
+
+#### Capa 3 — Bug en `_read_mangohud_shm()`
+Los 4 bytes del FPS en memoria compartida se leían como entero con `int.from_bytes()`,
+produciendo valores absurdos (ej. 165.5 FPS → 1,126,531,072). Debía usarse `struct.unpack('<f', ...)`.
+
+#### Bonus — namespace `/tmp` en pressure-vessel
+Los procesos Wine/umu de Battle.net comparten el `/tmp` del host (mismo device `0:54`),
+por lo que `/tmp/turzx_logs/` es visible dentro del contenedor sin configuración extra.
+
+### Cambios realizados
+
+#### 1. `sensors/fps.py` — FPS sensor completo
+
+**Path corregido:**
+```python
+# Antes:
+_TURZX_MANGOHUD_DIR = Path("/tmp/open-turzx-logs")
+# Después:
+_TURZX_MANGOHUD_DIR = Path("/tmp/turzx_logs")
+```
+
+**Auto-configuración de MangoHud (`_setup_mangohud_logging`):**
+- Si `~/.config/MangoHud/MangoHud.conf` no existe → se crea con `autostart_log=1`,
+  `log_interval=100`, `output_folder=/tmp/turzx_logs`.
+- Si ya existe pero no tiene `autostart_log` → se añade al final sin tocar el overlay.
+- Se ejecuta en cada `_ensure_mangohud_log_dir()`.
+
+**Bug shm corregido:**
+```python
+# Antes (incorrecto — lee como entero):
+value = float(int.from_bytes(data[0:4], "little", signed=True))
+# Después (correcto — IEEE 754 float):
+(value,) = struct.unpack("<f", data[0:4])
+```
+
+**Diagnóstico mejorado:**
+- `fps_diagnose()` detecta el estado "running but not logging" (MangoHud cargado,
+  log stale, sin `autostart_log`).
+- `FpsSensor.read()` re-evalúa el diagnóstico cada 60 s (antes: solo una vez al arrancar).
+- El mensaje de diagnóstico solo se imprime cuando cambia (evita spam en stderr).
+
+#### 2. `daemon.py` — Eliminar warning Kvantum
+
+```python
+# Antes de crear QApplication, limpiar el override del sistema:
+os.environ.pop("QT_STYLE_OVERRIDE", None)
+```
+
+`QT_STYLE_OVERRIDE=kvantum` lo setea Hyprland/Omarchy globalmente. PySide6 solo incluye
+los estilos `Fusion` y `Windows` — no tiene el plugin de Kvantum — por lo que Qt
+imprimía el warning e ignoraba el override. Open-Turzx usa su propio QSS dark theme
+y no necesita el estilo del sistema.
+
+#### 3. `LINUX_SETUP.md` — Documentación actualizada
+- Sección FPS Sensor reescrita: rutas correctas, setup automático, nota sobre pressure-vessel.
+- Nueva entrada en Troubleshooting: Kvantum warning y FPS = 0 con MangoHud activo.
+
+### Archivos modificados
+```
+turzx/sensors/fps.py    ← path fix, auto-config MangoHud, bug shm, diagnóstico mejorado
+turzx/daemon.py         ← QT_STYLE_OVERRIDE pop antes de QApplication
+LINUX_SETUP.md          ← documentación FPS y Kvantum actualizada
+DEVLOG.md               ← esta entrada
+```
+
+### Lecciones para el bucle de mejora
+- **Path mismatch entre código y configs de Lutris**: al cambiar un directorio en el código,
+  buscar también en los YAMLs de `~/.local/share/lutris/games/`.
+- **`/tmp` en pressure-vessel**: el host y el contenedor comparten `/tmp` (mismo device ID).
+  Paths bajo `$HOME` también son seguros como fallback.
+- **MangoHud `autostart_log`**: sin esta opción no se escriben logs aunque el overlay se muestre.
+  La app debe crearlo automáticamente para ser autónoma (zero-config para el usuario).
+- **`struct.unpack` vs `int.from_bytes`**: para leer floats de memoria binaria, siempre
+  `struct.unpack('<f', ...)`, nunca conversión vía entero.
 
 ---
 

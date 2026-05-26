@@ -8,13 +8,14 @@ If no FPS source is detected, the sensor silently produces no readings.
 
 Linux usage: install mangohud and configure it to write benchmark logs
   MANGOHUD_CONFIG=fps_only,log_interval=100,autostart_log,output_folder=/tmp/turzx_logs
-Or TURZX will auto-detect MangoHud benchmark logs in ~/mangohud_logs/ and /tmp/.
+Or Open-Turzx will auto-detect MangoHud benchmark logs in ~/mangohud_logs/ and /tmp/.
 """
 
 from __future__ import annotations
 
 import csv
 import os
+import struct
 import sys
 import time
 from pathlib import Path
@@ -34,7 +35,7 @@ def _read_rtss_fps() -> tuple[bool, float]:
     """Read FPS from RTSS shared memory.
 
     First tries the foreground window's PID.  If that isn't tracked by RTSS
-    (e.g. TURZX editor is in front), falls back to the entry with the highest
+    (e.g. Open-Turzx editor is in front), falls back to the entry with the highest
     framerate — that's almost always the game running in the background.
 
     Returns (rtss_available, fps).  fps=0 when RTSS is active but no 3D app
@@ -200,12 +201,59 @@ def _find_recent_mangohud_csv(search_dir: Path) -> Path | None:
     return csv_files[0]
 
 
+_MANGOHUD_CONF_DIR = Path.home() / ".config" / "MangoHud"
+_MANGOHUD_CONF_PATH = _MANGOHUD_CONF_DIR / "MangoHud.conf"
+_MANGOHUD_CONF_MARKER = "# managed-by-open-turzx"
+
+# Minimal log-only settings injected into MangoHud.conf.
+# We do NOT touch overlay/display settings — only the logging section.
+_MANGOHUD_LOG_CONF = f"""\
+{_MANGOHUD_CONF_MARKER}
+# Open-Turzx needs these to read FPS in real time.
+# Remove this section if you prefer to start logging manually (F2).
+autostart_log=1
+log_interval=100
+output_folder={_TURZX_MANGOHUD_DIR}
+"""
+
+
 def _ensure_mangohud_log_dir() -> None:
-    """Create the log folder used by TURZX launcher configs if possible."""
+    """Create the log folder and, if needed, inject logging settings into MangoHud.conf.
+
+    We only write to MangoHud.conf if it does not already contain our marker
+    or the ``autostart_log`` key, so we never clobber user overlay settings.
+    """
     try:
         _TURZX_MANGOHUD_DIR.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
+
+    try:
+        _setup_mangohud_logging()
+    except Exception:
+        pass
+
+
+def _setup_mangohud_logging() -> None:
+    """Ensure MangoHud.conf has the minimal logging settings Open-Turzx needs.
+
+    Strategy:
+    * If the file does not exist → create it with only the log section.
+    * If it exists and already has ``autostart_log`` → leave it untouched.
+    * If it exists but lacks ``autostart_log`` → append our log section.
+    """
+    _MANGOHUD_CONF_DIR.mkdir(parents=True, exist_ok=True)
+
+    if _MANGOHUD_CONF_PATH.exists():
+        content = _MANGOHUD_CONF_PATH.read_text(encoding="utf-8", errors="replace")
+        # Already configured (either by us or the user) — nothing to do.
+        if "autostart_log" in content:
+            return
+        # Append logging settings without touching existing content.
+        with open(_MANGOHUD_CONF_PATH, "a", encoding="utf-8") as f:
+            f.write("\n" + _MANGOHUD_LOG_CONF)
+    else:
+        _MANGOHUD_CONF_PATH.write_text(_MANGOHUD_LOG_CONF, encoding="utf-8")
 
 
 def _read_mangohud_log() -> float:
@@ -215,8 +263,8 @@ def _read_mangohud_log() -> float:
     is not set).  The naming convention is: {program}_{timestamp}.csv
 
     Search order:
-    1. Dedicated /tmp/turzx_fps.log (legacy output_file, pre-0.8.3)
-    2. /tmp/turzx_logs/ (recommended output_folder for TURZX)
+    1. Dedicated /tmp/open-turzx-fps.log (legacy output_file, pre-0.8.3)
+    2. /tmp/turzx_logs/ (recommended output_folder for Open-Turzx)
     3. MangoHud default: ~/mangohud_logs/
     4. $HOME (MangoHud >=0.8.3 default when output_folder is empty)
     5. /tmp/ fallback CSV files
@@ -224,11 +272,11 @@ def _read_mangohud_log() -> float:
     log_candidates: list[Path] = []
 
     # 1. Legacy dedicated log file (output_file parameter, pre-0.8.3)
-    legacy = Path("/tmp/turzx_fps.log")
+    legacy = Path("/tmp/open-turzx-fps.log")
     if legacy.exists():
         log_candidates.append(legacy)
 
-    # 2. TURZX recommended output_folder
+    # 2. Open-Turzx recommended output_folder
     recent = _find_recent_mangohud_csv(_TURZX_MANGOHUD_DIR)
     if recent:
         log_candidates.append(recent)
@@ -345,8 +393,8 @@ def _read_mangohud_shm() -> float:
                 fd = os.open(f"/dev/shm/{name}", os.O_RDONLY)
                 try:
                     data = mmap.mmap(fd, 4096, access=mmap.ACCESS_READ)
-                    # Simple format: first 4 bytes = fps as float
-                    value = float(int.from_bytes(data[0:4], "little", signed=True))
+                    # First 4 bytes = fps stored as IEEE 754 float32
+                    (value,) = struct.unpack("<f", data[0:4])
                     if 0 < value < 1000:
                         return value
                 finally:
@@ -410,7 +458,7 @@ def fps_diagnose() -> dict:
 
     # Check the same sources used by the live reader.
     candidates = [
-        Path("/tmp/turzx_fps.log"),
+        Path("/tmp/open-turzx-fps.log"),
         _find_recent_mangohud_csv(_TURZX_MANGOHUD_DIR),
         _find_recent_mangohud_csv(Path.home() / "mangohud_logs"),
         _find_recent_mangohud_csv(Path.home()),
@@ -423,6 +471,24 @@ def fps_diagnose() -> dict:
         result["log_path"] = str(candidate)
         result["fps"] = _parse_mangohud_csv(candidate, max_age_seconds=60)
         break
+
+    # Check if the found log is stale (older than 30 s) even though MangoHud is running.
+    log_is_fresh = False
+    if result["log_path"]:
+        try:
+            log_age = time.time() - Path(result["log_path"]).stat().st_mtime
+            log_is_fresh = log_age <= 30
+        except OSError:
+            pass
+
+    conf_has_autostart = False
+    if _MANGOHUD_CONF_PATH.exists():
+        try:
+            conf_has_autostart = "autostart_log" in _MANGOHUD_CONF_PATH.read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            pass
 
     if not result["installed"]:
         result["suggestion"] = (
@@ -440,6 +506,20 @@ def fps_diagnose() -> dict:
             f"  MANGOHUD=1 MANGOHUD_CONFIG={_MANGOHUD_CONFIG}\n"
             "Note: MangoHud >=0.8.3 ignores 'output_file'. Use 'output_folder' instead."
         )
+    elif result["running"] and not log_is_fresh:
+        # MangoHud is loaded in a process but the log is stale — logging not active.
+        if conf_has_autostart:
+            result["suggestion"] = (
+                "MangoHud is running but the log file is stale. "
+                "Launch a game with MANGOHUD=1 to start writing fresh FPS data."
+            )
+        else:
+            result["suggestion"] = (
+                "MangoHud is running but autostart_log is not set — "
+                "it shows the overlay but never writes log files.\n"
+                f"Open-Turzx has written logging settings to {_MANGOHUD_CONF_PATH}.\n"
+                "Restart your game for the change to take effect."
+            )
     elif result["fps"] == 0.0:
         result["suggestion"] = (
             "MangoHud log found but FPS is 0. Make sure a game is actually rendering frames."
@@ -453,9 +533,14 @@ def fps_diagnose() -> dict:
 class FpsSensor(SensorBackend):
     """Reads game FPS via RTSS (Windows) or MangoHud (Linux)."""
 
+    # Re-run diagnostics every 60 seconds so the user gets actionable feedback
+    # even when Open-Turzx was already running when the game started.
+    _DIAG_INTERVAL = 60.0
+
     def __init__(self) -> None:
         super().__init__()
-        self._diagnosed = False
+        self._last_diag_time: float = 0.0
+        self._last_diag_suggestion: str = ""
 
     def read(self) -> list[SensorReading]:
         fps: float = 0.0
@@ -470,12 +555,25 @@ class FpsSensor(SensorBackend):
                 _, fps = _read_mangohud_fps()
             except Exception:
                 pass
-            if not self._diagnosed:
-                self._diagnosed = True
-                diag = fps_diagnose()
-                if not diag["installed"] or not diag["log_found"]:
-                    import sys as _sys
-                    print(f"[TURZX FPS] {diag['suggestion']}", file=_sys.stderr)
+
+            # Run diagnostics periodically when FPS is unavailable so the user
+            # receives actionable feedback in the console/journal.
+            if fps == 0.0:
+                now = time.monotonic()
+                if now - self._last_diag_time >= self._DIAG_INTERVAL:
+                    self._last_diag_time = now
+                    try:
+                        diag = fps_diagnose()
+                        suggestion = diag.get("suggestion", "")
+                        # Print only when the message changed or on first run.
+                        if suggestion and suggestion != self._last_diag_suggestion:
+                            self._last_diag_suggestion = suggestion
+                            print(
+                                f"[Open-Turzx FPS] {suggestion}",
+                                file=sys.stderr,
+                            )
+                    except Exception:
+                        pass
 
         # Always report the sensor so it appears in the sensor list.
         # Keep sys.fps for existing layouts and expose the documented fps.current.

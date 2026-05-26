@@ -216,6 +216,23 @@ Esto es esperado en modo headless. Verifica los logs:
 python -m turzx 2>&1 | tee turzx.log
 ```
 
+### Warning "invalid style override 'kvantum' passed" al iniciar
+
+PySide6 solo incluye los estilos Qt `Fusion` y `Windows` — no tiene el plugin de Kvantum.
+Entornos como Hyprland/Omarchy establecen `QT_STYLE_OVERRIDE=kvantum` globalmente.
+Open-Turzx **elimina este override automáticamente** antes de crear su `QApplication`,
+por lo que el warning desaparece desde esta versión.
+
+### El contador de FPS muestra 0 aunque MangoHud esté activo
+
+Si MangoHud está en pantalla pero no escribe logs:
+1. El directorio `/tmp/turzx_logs/` debe existir **antes** de lanzar el juego.
+   Open-Turzx lo crea al iniciarse — si el juego arrancó antes que Open-Turzx, reinicia el juego.
+2. Verifica que `~/.config/MangoHud/MangoHud.conf` contenga `autostart_log=1`.
+   Open-Turzx lo crea automáticamente, pero solo si MangoHud no tiene ya esa clave.
+3. En juegos dentro de contenedores pressure-vessel (Steam Runtime), el `/tmp` del host
+   es compartido — `/tmp/turzx_logs/` es visible dentro del contenedor sin configuración extra.
+
 ## 📞 Información del Dispositivo
 
 - **Nombre**: TURZX 2.8" USB Screen
@@ -238,16 +255,28 @@ sudo dnf install mangohud        # Fedora
 sudo pacman -S mangohud          # Arch
 ```
 
-### Configuración
+### Configuración automática (recomendado)
 
-Para que TURZX lea los FPS, MangoHud debe escribir un log. Hay dos opciones:
+Al iniciarse, Open-Turzx crea automáticamente `~/.config/MangoHud/MangoHud.conf` con la configuración mínima de logging si no existe o si no contiene `autostart_log`:
+
+```ini
+autostart_log=1
+log_interval=100
+output_folder=/tmp/turzx_logs
+```
+
+Esto **no sobreescribe** ninguna configuración existente del overlay — solo añade la sección de logging si falta.
+
+### Configuración manual (por juego)
+
+Para forzar el logging en un juego concreto desde Lutris/Steam:
 
 **Opción A — Log dedicado en /tmp/turzx_logs** (recomendado):
 ```
-MANGOHUD_CONFIG=fps_only,alpha=0,background_alpha=0,font_size=1,log_interval=100,autostart_log,output_folder=/tmp/turzx_logs mangohud %command%
+MANGOHUD=1 MANGOHUD_CONFIG=fps_only,alpha=0,background_alpha=0,font_size=1,log_interval=100,autostart_log,output_folder=/tmp/turzx_logs mangohud %command%
 ```
 
-**Opción B — Auto-detección**: Sin `output_folder`, MangoHud >=0.8.3 escribe los logs en `$HOME/{programa}_{fecha}.csv`. TURZX los detecta automáticamente, pero la Opción A es más limpia.
+**Opción B — Auto-detección**: Sin `output_folder`, MangoHud >=0.8.3 escribe los logs en `$HOME/{programa}_{fecha}.csv`. Open-Turzx los detecta automáticamente, pero la Opción A es más limpia.
 
 **Nota importante**: MangoHud >=0.8.3 **ignora** el parámetro `output_file` (obsoleto). Usa `output_folder` en su lugar.
 
