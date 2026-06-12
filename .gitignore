@@ -32,3 +32,6 @@ assets/videos/*
 
 # Claude Code
 .claude/
+
+# Auditorías internas (no subir a GitHub)
+auditorias/

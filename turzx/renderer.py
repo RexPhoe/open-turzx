@@ -9,12 +9,13 @@ Two-layer architecture for smooth 60 FPS video playback:
   2. **Background frame**: video frame / static image / solid color.
      Advances every frame at 60 FPS.
 
-Each render_frame() call: read next video frame → paste cached overlay → JPEG.
+Each compose_frame() call: read next video frame → paste cached overlay.
 This keeps the per-frame cost minimal (~5 ms) so 60 FPS is achievable.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import sys
@@ -26,10 +27,11 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 from .config import Layout, LayoutElement
-from .images import to_jpeg
 from .protocol import SCREEN_W, SCREEN_H
 from .sensors.base import SensorReading
 from .sensors.units import convert as convert_unit, get_strftime
+
+log = logging.getLogger(__name__)
 
 # ── Font cache ──
 
@@ -218,7 +220,7 @@ class Renderer:
 
         Renders text, sensor readouts, and image elements onto a transparent
         RGBA image that gets composited on top of the background each frame.
-        Real-time sensors (clock, date) are skipped here — drawn in render_frame.
+        Real-time sensors (clock, date) are skipped here — drawn in compose_frame.
         """
         overlay = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
@@ -248,18 +250,13 @@ class Renderer:
         ]
         self._overlay = overlay
 
-    def render_frame(self, layout: Layout) -> bytes:
-        """Produce one JPEG frame for the device (call at 60 FPS).
+    def compose_frame(self, layout: Layout) -> Image.Image:
+        """Compose one frame as a PIL Image (pre-JPEG, pre-rotation).
 
         Reads the next video frame (or static bg), composites the cached
-        overlay on top, draws real-time sensors (clock/date), rotates,
-        and encodes to JPEG.
+        overlay on top, and draws real-time sensors (clock/date).
+        Called at screen_fps by the render thread.
         """
-        img = self._compose_frame(layout)
-        return to_jpeg(img, self.width, self.height, rotate=layout.rotation)
-
-    def _compose_frame(self, layout: Layout) -> Image.Image:
-        """Compose one frame as a PIL Image (pre-JPEG, pre-rotation)."""
         bg = self._get_background(layout).copy()
         if self._overlay is not None:
             bg.paste(self._overlay, (0, 0), self._overlay)
@@ -433,10 +430,10 @@ class Renderer:
                     # Read native fps from the container
                     native = self._video_cap.get(cv2.CAP_PROP_FPS)
                     self._video_native_fps = native if native > 0 else 0.0
-                    print(
-                        f"[TURZX video] Opened: {path!r}  "
-                        f"native_fps={self._video_native_fps:.3f}",
-                        file=sys.stderr,
+                    log.info(
+                        "Video opened: %r native_fps=%.3f",
+                        path,
+                        self._video_native_fps,
                     )
 
                 # Compute frame interval from native fps (fallback: VIDEO_FPS_CAP)

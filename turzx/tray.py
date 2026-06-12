@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QIcon, QPixmap, QColor, QPainter, QFont
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
@@ -32,7 +33,7 @@ def _make_icon() -> QIcon:
     painter.drawRoundedRect(4, 4, size - 8, size - 8, 10, 10)
     painter.setPen(QColor(255, 255, 255))
     painter.setFont(QFont("Arial", 28, QFont.Weight.Bold))
-    painter.drawText(pixmap.rect(), 0x0084, "T")  # AlignCenter
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "T")
     painter.end()
     return QIcon(pixmap)
 
@@ -42,7 +43,7 @@ class TurzxTray(QSystemTrayIcon):
         super().__init__()
         self.daemon = daemon
         self.setIcon(_make_icon())
-        self.setToolTip(_("TURZX Monitor"))
+        self.setToolTip(_("Open-Turzx"))
         self._build_menu()
         self.activated.connect(self._on_activated)
 
@@ -89,7 +90,7 @@ class TurzxTray(QSystemTrayIcon):
         if self.daemon.is_running:
             self.daemon.stop_render()
             self._action_toggle.setText(_("Start"))
-            self.setToolTip(_("TURZX Monitor (paused)"))
+            self.setToolTip(_("Open-Turzx (paused)"))
         else:
             self.daemon.start_render()
             self._action_toggle.setText(_("Pause"))
@@ -112,7 +113,7 @@ class TurzxTray(QSystemTrayIcon):
         label = mode_labels.get(mode, mode.capitalize())
         is_non_static = mode != "static"
         self._action_pause_mode.setVisible(is_non_static)
-        self.setToolTip(f"TURZX Monitor ({label})")
+        self.setToolTip(f"Open-Turzx ({label})")
 
     def _open_settings(self) -> None:
         self.daemon.show_settings()

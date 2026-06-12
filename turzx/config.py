@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -26,6 +27,20 @@ def _default_config_dir() -> Path:
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return base / "turzx"
+
+
+def sanitize_layout_name(name: str) -> str:
+    """Turn an arbitrary layout name into a safe filename stem."""
+    fname = re.sub(r"[^a-z0-9_-]+", "_", name.strip().lower()).strip("_")
+    return fname or "layout"
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON via a temp file + rename so a crash can't corrupt the target."""
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
 
 
 # ── Data models ──
@@ -307,15 +322,13 @@ class ConfigManager:
     def _write_state(self) -> None:
         """Persist active layout and mode config atomically."""
         try:
-            with open(self._state_path, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "active_layout": self._active_name,
-                        "mode": self._mode_config.to_dict(),
-                    },
-                    f,
-                    indent=2,
-                )
+            _atomic_write_json(
+                self._state_path,
+                {
+                    "active_layout": self._active_name,
+                    "mode": self._mode_config.to_dict(),
+                },
+            )
         except Exception:
             pass
 
@@ -358,10 +371,9 @@ class ConfigManager:
             return Layout.from_dict(json.load(f))
 
     def save_layout(self, layout: Layout, name: str | None = None) -> Path:
-        fname = name or layout.name.lower().replace(" ", "_")
+        fname = sanitize_layout_name(name or layout.name)
         path = self.layouts_dir / f"{fname}.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(layout.to_dict(), f, indent=2, ensure_ascii=False)
+        _atomic_write_json(path, layout.to_dict())
         return path
 
     def delete_layout(self, name: str) -> None:

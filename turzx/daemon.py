@@ -12,11 +12,11 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
 import time
-import traceback
 
 from PySide6.QtCore import QThread, Signal, QObject, QTimer
 from PySide6.QtWidgets import QApplication
@@ -29,6 +29,20 @@ from .renderer import Renderer
 from .sensors.base import SensorManager
 from .transitions import apply as apply_transition, resolve as resolve_transition
 from .tray import TurzxTray
+
+log = logging.getLogger(__name__)
+
+# Seconds between connection attempts while the device is absent
+RECONNECT_INTERVAL = 5.0
+
+
+def _is_headless() -> bool:
+    """True when running on Linux without any display server."""
+    return (
+        sys.platform == "linux"
+        and not os.environ.get("DISPLAY")
+        and not os.environ.get("WAYLAND_DISPLAY")
+    )
 
 
 # ── Render thread ──
@@ -59,6 +73,8 @@ class RenderThread(QThread):
         self.daemon = daemon
         self._running = True
         self._cached_values: dict = {}
+        self._last_frame = None  # PIL Image of the last composed frame
+        self._next_reconnect: float = 0.0
 
         # Transition state
         self._last_layout_name: str = ""
@@ -127,7 +143,7 @@ class RenderThread(QThread):
             self.daemon.renderer.update_overlay(layout, self._cached_values)
 
         # Video pipeline: compose frame as PIL Image
-        new_frame = self.daemon.renderer._compose_frame(layout)
+        new_frame = self.daemon.renderer.compose_frame(layout)
 
         # Apply transition blending if active
         if self._transition_old_frame is not None:
@@ -158,6 +174,11 @@ class RenderThread(QThread):
 
         dev = self.daemon.device
         if dev is None:
+            # Retry connection periodically so plugging the screen in after
+            # startup works without restarting the daemon.
+            if now >= self._next_reconnect:
+                self._next_reconnect = now + RECONNECT_INTERVAL
+                self.daemon._connect_device(notify=False)
             return
 
         try:
@@ -169,7 +190,7 @@ class RenderThread(QThread):
 
     def _start_transition(self, now: float) -> None:
         """Capture old frame and read transition settings from mode config."""
-        old = getattr(self, "_last_frame", None)
+        old = self._last_frame
         if old is None:
             return
         mc = self.daemon.config.mode_config
@@ -210,13 +231,9 @@ class TurzxDaemon(QObject):
         self._settings_window = None
 
         self.mode_controller = ModeController(self.config)
-        
+
         # Tray is only available if a display server is present
-        self._headless = (
-            sys.platform in ("linux", "linux2")
-            and not os.environ.get("DISPLAY")
-            and not os.environ.get("WAYLAND_DISPLAY")
-        )
+        self._headless = _is_headless()
         self.tray = TurzxTray(self) if not self._headless else None
 
     @property
@@ -230,7 +247,7 @@ class TurzxDaemon(QObject):
         if self.tray:
             self.tray.show()
         else:
-            print("[Open-Turzx] Running in headless mode (no display server detected)")
+            log.info("Running in headless mode (no display server detected)")
         self._connect_device()
         self.start_render()
 
@@ -243,21 +260,22 @@ class TurzxDaemon(QObject):
 
     # ── Device ──
 
-    def _connect_device(self) -> None:
+    def _connect_device(self, notify: bool = True) -> None:
+        """Try to connect. With notify=False, failures are silent (periodic retries)."""
         try:
             dev = TurzxDevice(verbose=False)
             dev.connect()
             dev.init_sequence()
             self.device = dev
             msg = "Device connected"
-            print(f"[Open-Turzx] {msg}")
+            log.info(msg)
             if self.tray:
                 self.tray.showMessage("Open-Turzx", msg, self.tray.icon())
         except Exception as e:
             self.device = None
             msg = f"Device not found: {e}"
-            print(f"[Open-Turzx] {msg}")
-            if self.tray:
+            log.info(msg)
+            if notify and self.tray:
                 self.tray.showMessage("Open-Turzx", msg, self.tray.icon())
 
     def _disconnect_device(self) -> None:
@@ -273,7 +291,7 @@ class TurzxDaemon(QObject):
         """Attempt to reconnect after a failure."""
         self._disconnect_device()
         time.sleep(1)
-        self._connect_device()
+        self._connect_device(notify=False)
 
     # ── Render ──
 
@@ -296,7 +314,7 @@ class TurzxDaemon(QObject):
             self._render_thread = None
 
     def _on_render_error(self, msg: str) -> None:
-        print(f"[Open-Turzx] Render error: {msg}", file=sys.stderr)
+        log.error("Render error: %s", msg)
 
     # ── Settings window ──
 
@@ -310,9 +328,7 @@ class TurzxDaemon(QObject):
             self._settings_window.raise_()
             self._settings_window.activateWindow()
         except Exception as exc:
-            import traceback
-            print(f"[Open-Turzx] Error opening settings: {exc}", file=sys.stderr)
-            traceback.print_exc()
+            log.exception("Error opening settings")
             if self.tray:
                 self.tray.showMessage(
                     "Open-Turzx", f"Error opening settings: {exc}", self.tray.icon()
@@ -323,15 +339,11 @@ class TurzxDaemon(QObject):
 
 
 def main() -> None:
-    # Linux: Detect if running with a display server or headless
-    # Use offscreen platform if no display is available
-    if sys.platform == "linux" or sys.platform == "linux2":
-        has_display = bool(os.environ.get("DISPLAY")) or bool(
-            os.environ.get("WAYLAND_DISPLAY")
-        )
-        if not has_display:
-            # Try to use offscreen platform for headless operation
-            os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    logging.basicConfig(level=logging.INFO, format="[Open-Turzx] %(message)s")
+
+    # Linux: use the offscreen Qt platform when no display server is available
+    if _is_headless():
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
     # PySide6 ships only the Fusion and Windows styles; it does not include the
     # Kvantum Qt plugin.  Desktop environments like Hyprland set

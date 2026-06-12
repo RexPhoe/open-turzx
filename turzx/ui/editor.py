@@ -8,9 +8,8 @@ configure elements on a 480x480 canvas.
 from __future__ import annotations
 
 import copy
-import sys
 
-from PySide6.QtCore import Qt, Signal, QRectF, QTimer
+from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -33,16 +32,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QLabel,
-    QSplitter,
 )
 
 from ..config import Layout, LayoutElement, Background
 from ..protocol import SCREEN_W, SCREEN_H
-
-
-def _log(msg: str) -> None:
-    """Debug log for video pipeline — prints to stderr."""
-    print(f"[TURZX video] {msg}", file=sys.stderr, flush=True)
 
 
 # ── Draggable element ─────────────────────────────────────────
@@ -188,32 +181,6 @@ class ElementItem(QGraphicsItem):
         return super().itemChange(change, value)
 
 
-# ── cv2 frame → QPixmap helper ────────────────────────────────
-
-
-def _cv2_frame_to_pixmap(frame) -> QPixmap | None:
-    """Convert a BGR cv2 numpy frame to QPixmap safely.
-
-    The key issue: QImage wraps external memory (frame.data).
-    If frame is freed before QImage is used, we get garbage or crash.
-    Solution: copy the numpy bytes first, then create QImage from the copy.
-    """
-    try:
-        import cv2
-
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = frame.shape
-        # Make a contiguous copy of the bytes — this is critical
-        data = bytes(frame.data)
-        qimg = QImage(data, w, h, ch * w, QImage.Format.Format_RGB888)
-        # .copy() creates a deep copy that owns its own pixel data
-        pm = QPixmap.fromImage(qimg.copy())
-        return pm if not pm.isNull() else None
-    except Exception as e:
-        _log(f"frame_to_pixmap error: {e}")
-        return None
-
-
 def _pil_to_qpixmap(pil_image) -> QPixmap:
     """Convert a PIL Image (RGB/RGBA) to QPixmap without JPEG roundtrip."""
     if pil_image.mode != "RGBA":
@@ -221,100 +188,6 @@ def _pil_to_qpixmap(pil_image) -> QPixmap:
     data = pil_image.tobytes("raw", "BGRA")
     qimg = QImage(data, pil_image.width, pil_image.height, QImage.Format.Format_ARGB32)
     return QPixmap.fromImage(qimg.copy())
-
-
-# ── Video background player ───────────────────────────────────
-
-
-class _VideoBgPlayer:
-    """Manages cv2 video playback for the editor canvas background.
-
-    Keeps the VideoCapture open and reads one frame per tick.
-    Loops back to start when reaching EOF.
-    """
-
-    def __init__(self) -> None:
-        self._cap = None
-        self._path: str | None = None
-        self._fps: float = 24.0
-        self._ok = False
-
-    @property
-    def is_open(self) -> bool:
-        return self._ok and self._cap is not None
-
-    @property
-    def fps(self) -> float:
-        return self._fps
-
-    def open(self, path: str) -> bool:
-        """Open a video file. Returns True on success."""
-        try:
-            import cv2
-        except ImportError:
-            _log("cv2 not installed")
-            return False
-
-        norm = path.replace("\\", "/")
-        # If already open on same file, keep it
-        if self._path == norm and self._cap is not None:
-            if self._cap.isOpened():
-                return True
-            # Cap died, reopen below
-
-        self.close()
-        try:
-            cap = cv2.VideoCapture(norm)
-            if not cap.isOpened():
-                _log(f"VideoCapture failed to open: {norm}")
-                return False
-            self._cap = cap
-            self._path = norm
-            self._fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
-            self._ok = True
-            _log(f"Opened video: {norm} ({self._fps:.0f} FPS)")
-            return True
-        except Exception as e:
-            _log(f"open error: {e}")
-            return False
-
-    def next_frame_pixmap(self) -> QPixmap | None:
-        """Read next frame, loop on EOF, return as QPixmap."""
-        if not self._ok or self._cap is None:
-            return None
-        try:
-            import cv2
-
-            ret, frame = self._cap.read()
-            if not ret:
-                # Loop — try seek first
-                self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                ret, frame = self._cap.read()
-            if not ret:
-                # Seek failed (H.265, VP9, etc.) — reopen from scratch
-                self._cap.release()
-                self._cap = cv2.VideoCapture(self._path)
-                if self._cap.isOpened():
-                    ret, frame = self._cap.read()
-                else:
-                    self._ok = False
-            if not ret:
-                _log("Failed to read frame even after reopen")
-                return None
-            return _cv2_frame_to_pixmap(frame)
-        except Exception as e:
-            _log(f"next_frame error: {e}")
-            return None
-
-    def close(self) -> None:
-        if self._cap is not None:
-            try:
-                self._cap.release()
-            except Exception:
-                pass
-        self._cap = None
-        self._path = None
-        self._ok = False
 
 
 # ── Scene ──────────────────────────────────────────────────────
@@ -337,14 +210,8 @@ class EditorScene(QGraphicsScene):
         super().__init__(parent)
         self.setSceneRect(0, 0, SCREEN_W, SCREEN_H)
         self._layout: Layout | None = None
-        self._bg_item: QGraphicsPixmapItem | None = None
         self._render_bg: QGraphicsPixmapItem | None = None
         self._items: list[ElementItem] = []
-
-        # Video background player + timer
-        self._video_player = _VideoBgPlayer()
-        self._video_timer = QTimer()
-        self._video_timer.timeout.connect(self._tick_video)
 
         self.setBackgroundBrush(QBrush(QColor(15, 15, 25)))
         self.selectionChanged.connect(self._on_selection)
@@ -379,14 +246,9 @@ class EditorScene(QGraphicsScene):
     # ── layout management ──
 
     def load_layout(self, layout: Layout) -> None:
-        # Stop video before clearing
-        self._video_timer.stop()
-        self._video_player.close()
-
         self._layout = layout
         self.clear()
         self._items.clear()
-        self._bg_item = None
         self._render_bg = None
 
         self._apply_background()
@@ -468,91 +330,12 @@ class EditorScene(QGraphicsScene):
     # ── background ──
 
     def _apply_background(self) -> None:
+        """Set the fallback brush color. Image/video backgrounds are shown by
+        the full-scene render bitmap (update_render_pixmap), so no separate
+        background item or video decoding is needed here."""
         if not self._layout:
             return
-        bg = self._layout.background
-
-        # Remove old background item if present
-        if self._bg_item is not None:
-            self.removeItem(self._bg_item)
-            self._bg_item = None
-
-        # Stop video playback
-        self._video_timer.stop()
-        self._video_player.close()
-
-        if bg.type == "image" and bg.path:
-            pm = QPixmap(bg.path)
-            if not pm.isNull():
-                pm = pm.scaled(
-                    SCREEN_W,
-                    SCREEN_H,
-                    Qt.AspectRatioMode.IgnoreAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-                self._bg_item = QGraphicsPixmapItem(pm)
-                self._bg_item.setZValue(-10000)
-                self.addItem(self._bg_item)
-                self.setBackgroundBrush(QBrush(QColor(0, 0, 0)))
-            else:
-                _log(f"QPixmap failed to load image: {bg.path}")
-                self.setBackgroundBrush(QBrush(QColor(*bg.color)))
-
-        elif bg.type == "video" and bg.path:
-            _log(f"Applying video background: {bg.path}")
-            if self._video_player.open(bg.path):
-                # Read first frame to show immediately
-                pm = self._video_player.next_frame_pixmap()
-                if pm is not None:
-                    pm = pm.scaled(
-                        SCREEN_W,
-                        SCREEN_H,
-                        Qt.AspectRatioMode.IgnoreAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                    self._bg_item = QGraphicsPixmapItem(pm)
-                    self._bg_item.setZValue(-10000)
-                    self.addItem(self._bg_item)
-                    self.setBackgroundBrush(QBrush(QColor(0, 0, 0)))
-                    _log(f"First frame OK: {pm.width()}x{pm.height()}")
-                else:
-                    _log("First frame returned None")
-                    self.setBackgroundBrush(QBrush(QColor(*bg.color)))
-
-                # Start playback timer — cap at ~15 FPS for editor
-                interval = max(66, int(1000 / self._video_player.fps))
-                self._video_timer.start(interval)
-                _log(f"Video timer started: {interval}ms interval")
-            else:
-                _log("Video player failed to open, falling back to solid color")
-                self.setBackgroundBrush(QBrush(QColor(*bg.color)))
-        else:
-            # Solid color or unknown type
-            self.setBackgroundBrush(QBrush(QColor(*bg.color)))
-
-    def _tick_video(self) -> None:
-        """Timer callback: advance one video frame on the canvas."""
-        if not self._video_player.is_open:
-            self._video_timer.stop()
-            return
-
-        pm = self._video_player.next_frame_pixmap()
-        if pm is None:
-            return
-
-        pm = pm.scaled(
-            SCREEN_W,
-            SCREEN_H,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-
-        if self._bg_item is not None:
-            self._bg_item.setPixmap(pm)
-        else:
-            self._bg_item = QGraphicsPixmapItem(pm)
-            self._bg_item.setZValue(-10000)
-            self.addItem(self._bg_item)
+        self.setBackgroundBrush(QBrush(QColor(*self._layout.background.color[:3])))
 
     def set_background(self, bg: Background) -> None:
         if self._layout:
@@ -570,10 +353,6 @@ class EditorScene(QGraphicsScene):
             self._render_bg.setPixmap(pixmap)
 
     # ── refresh ──
-
-    def refresh_all(self) -> None:
-        for item in self._items:
-            item.refresh()
 
     def refresh_item(self, element) -> None:
         for item in self._items:
@@ -715,7 +494,6 @@ class ElementListPanel(QWidget):
             locked = getattr(el, "locked", False)
             lock_icon = "\U0001f512 " if locked else ""
             item = QListWidgetItem(f"[z={el.z}] {lock_icon}{name}")
-            item.setData(Qt.ItemDataRole.UserRole, id(el))
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(
                 Qt.CheckState.Checked if locked else Qt.CheckState.Unchecked

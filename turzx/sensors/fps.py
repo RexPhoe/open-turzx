@@ -14,6 +14,7 @@ Or Open-Turzx will auto-detect MangoHud benchmark logs in ~/mangohud_logs/ and /
 from __future__ import annotations
 
 import csv
+import logging
 import os
 import struct
 import sys
@@ -21,6 +22,8 @@ import time
 from pathlib import Path
 
 from .base import SensorBackend, SensorReading
+
+log = logging.getLogger(__name__)
 
 # RTSS shared memory constants
 _RTSS_SIGNATURE = 0x52545353  # 'RTSS' in little-endian
@@ -217,12 +220,21 @@ output_folder={_TURZX_MANGOHUD_DIR}
 """
 
 
+_mangohud_setup_done = False
+
+
 def _ensure_mangohud_log_dir() -> None:
     """Create the log folder and, if needed, inject logging settings into MangoHud.conf.
 
     We only write to MangoHud.conf if it does not already contain our marker
     or the ``autostart_log`` key, so we never clobber user overlay settings.
+    Runs once per process — the result cannot change while we run.
     """
+    global _mangohud_setup_done
+    if _mangohud_setup_done:
+        return
+    _mangohud_setup_done = True
+
     try:
         _TURZX_MANGOHUD_DIR.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -256,6 +268,13 @@ def _setup_mangohud_logging() -> None:
         _MANGOHUD_CONF_PATH.write_text(_MANGOHUD_LOG_CONF, encoding="utf-8")
 
 
+# Last log file that produced a valid FPS reading (probed first to avoid
+# rescanning every directory on each read) and full-scan throttle.
+_last_log_path: Path | None = None
+_next_full_scan: float = 0.0
+_FULL_SCAN_INTERVAL = 5.0
+
+
 def _read_mangohud_log() -> float:
     """Parse MangoHud benchmark log for latest FPS value.
 
@@ -268,7 +287,27 @@ def _read_mangohud_log() -> float:
     3. MangoHud default: ~/mangohud_logs/
     4. $HOME (MangoHud >=0.8.3 default when output_folder is empty)
     5. /tmp/ fallback CSV files
+
+    The directory scan is expensive (stats every file in $HOME and /tmp),
+    so the last good log file is cached and the full scan is throttled.
     """
+    global _last_log_path, _next_full_scan
+
+    # Fast path: re-read the log that worked last time
+    if _last_log_path is not None:
+        try:
+            fps = _parse_mangohud_csv(_last_log_path)
+            if fps > 0:
+                return fps
+        except Exception:
+            pass
+        _last_log_path = None  # stale or gone — fall through to a full scan
+
+    now = time.monotonic()
+    if now < _next_full_scan:
+        return 0.0
+    _next_full_scan = now + _FULL_SCAN_INTERVAL
+
     log_candidates: list[Path] = []
 
     # 1. Legacy dedicated log file (output_file parameter, pre-0.8.3)
@@ -305,6 +344,7 @@ def _read_mangohud_log() -> float:
         try:
             fps = _parse_mangohud_csv(log_path)
             if fps > 0:
+                _last_log_path = log_path
                 return fps
         except Exception:
             continue
@@ -406,8 +446,24 @@ def _read_mangohud_shm() -> float:
     return 0.0
 
 
+# Scanning /proc/*/maps is expensive — cache the result briefly.
+_mangohud_running_cache: tuple[float, bool] = (0.0, False)
+_RUNNING_CHECK_INTERVAL = 30.0
+
+
 def _mangohud_is_running() -> bool:
-    """Check if any process has MangoHud loaded via /proc/*/maps."""
+    """Check if any process has MangoHud loaded via /proc/*/maps (cached 30 s)."""
+    global _mangohud_running_cache
+    now = time.monotonic()
+    ts, cached = _mangohud_running_cache
+    if now - ts < _RUNNING_CHECK_INTERVAL:
+        return cached
+    result = _scan_proc_for_mangohud()
+    _mangohud_running_cache = (now, result)
+    return result
+
+
+def _scan_proc_for_mangohud() -> bool:
     try:
         for proc_dir in Path("/proc").iterdir():
             if not proc_dir.name.isdigit():
@@ -568,10 +624,7 @@ class FpsSensor(SensorBackend):
                         # Print only when the message changed or on first run.
                         if suggestion and suggestion != self._last_diag_suggestion:
                             self._last_diag_suggestion = suggestion
-                            print(
-                                f"[Open-Turzx FPS] {suggestion}",
-                                file=sys.stderr,
-                            )
+                            log.info("FPS: %s", suggestion)
                     except Exception:
                         pass
 

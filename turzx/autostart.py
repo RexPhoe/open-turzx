@@ -39,9 +39,10 @@ def _exec_command() -> str:
     and sets Qt platform plugin / library paths required for PySide6.
     Falls back to raw python -m turzx if the script is missing.
     """
-    script = Path(__file__).resolve().parent.parent / "run_turzx.sh"
-    if script.is_file():
-        return str(script)
+    if sys.platform != "win32":
+        script = Path(__file__).resolve().parent.parent / "run_turzx.sh"
+        if script.is_file():
+            return str(script)
     return f"{sys.executable} -m turzx"
 
 

@@ -8,7 +8,7 @@ and toolbox.  The canvas shows real PIL-rendered output.
 from __future__ import annotations
 
 import copy
-import sys
+import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -51,16 +51,22 @@ from ..config import (
     ReactiveRule,
     RotativeConfig,
     ReactiveConfig,
+    sanitize_layout_name,
 )
 from ..protocol import SCREEN_W, SCREEN_H
-from ..sensors.units import available_units
-from ..sensors.units import available_time_formats, available_date_formats
+from ..sensors.units import (
+    available_units,
+    available_time_formats,
+    available_date_formats,
+)
 from ..transitions import TRANSITIONS
 from ..i18n import _
-from .editor import EditorScene, LayoutCanvas, ElementListPanel
+from .editor import EditorScene, LayoutCanvas, ElementListPanel, _pil_to_qpixmap
 
 if TYPE_CHECKING:
     from ..daemon import TurzxDaemon
+
+log = logging.getLogger(__name__)
 
 
 # ── Color button helper ───────────────────────────────────────
@@ -773,21 +779,6 @@ class PropertiesPanel(QScrollArea):
         self._w_bg_crop.setVisible(bg.type != "solid")
         self._updating = False
 
-    def update_sensors(self, ids: list[str]) -> None:
-        cur = self._cb_sensor.currentText()
-        self._cb_sensor.clear()
-        self._cb_sensor.addItems(sorted(ids))
-        idx = self._cb_sensor.findText(cur)
-        if idx >= 0:
-            self._cb_sensor.setCurrentIndex(idx)
-        # Also update bar sensor combo
-        cur_bar = self._cb_bar_sensor.currentText()
-        self._cb_bar_sensor.clear()
-        self._cb_bar_sensor.addItems(sorted(ids))
-        idx = self._cb_bar_sensor.findText(cur_bar)
-        if idx >= 0:
-            self._cb_bar_sensor.setCurrentIndex(idx)
-
     def update_sensor_units(self, unit_map: dict[str, str]) -> None:
         """Update the sensor_id → native_unit mapping."""
         self._sensor_units = unit_map
@@ -915,7 +906,7 @@ class ConfigWindow(QMainWindow):
         super().__init__()
         self.daemon = daemon
         self._dirty = False
-        self.setWindowTitle(_("TURZX - Editor"))
+        self.setWindowTitle(_("Open-Turzx - Editor"))
         self.setMinimumSize(1100, 750)
 
         sensor_ids = list(self.daemon.sensors.read_all().keys())
@@ -1327,14 +1318,14 @@ class ConfigWindow(QMainWindow):
     def _update_title(self):
         name = self.daemon.config.active_name
         prefix = "* " if self._dirty else ""
-        self.setWindowTitle(f"{prefix}TURZX - {name}")
+        self.setWindowTitle(f"{prefix}Open-Turzx - {name}")
 
     def _save_layout_as(self):
         name, ok = QInputDialog.getText(self, _("Save Layout As"), _("Name:"))
         if ok and name:
             layout = self.daemon.config.active_layout
             layout.name = name
-            fname = name.lower().replace(" ", "_")
+            fname = sanitize_layout_name(name)
             self.daemon.config.save_layout(layout, fname)
             # Update active to the new layout
             self.daemon.config.set_active(fname)
@@ -1687,16 +1678,12 @@ class ConfigWindow(QMainWindow):
             else:
                 values = self.daemon.sensors.read_all()
             img = self.daemon.renderer.render_image(layout, values)
-            from .editor import _pil_to_qpixmap
-
             pixmap = _pil_to_qpixmap(img)
             self._scene.update_render_pixmap(pixmap)
             # Update native fps label (refreshes once the video is actually opened)
             self._update_native_fps_label()
-        except Exception as e:
-            import traceback
-            print(f"[TURZX] Canvas render error: {e}", file=sys.stderr)
-            traceback.print_exc()
+        except Exception:
+            log.exception("Canvas render error")
 
     def _on_layout_modified(self) -> None:
         """Layout structure changed (drag, add, remove) — mark dirty + re-render."""
