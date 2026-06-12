@@ -1,5 +1,5 @@
 """
-turzx/transitions.py — Layout transition effects
+open_turzx/transitions.py — Layout transition effects
 =================================================
 Pure PIL-based blending functions.  Each receives the old and new
 frames (``Image.Image``, same size) and a progress float 0→1,

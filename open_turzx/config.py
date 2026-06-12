@@ -1,5 +1,5 @@
 """
-turzx/config.py — Layout configuration management
+open_turzx/config.py — Layout configuration management
 ==================================================
 Layouts are JSON files that define what appears on the screen:
 background, text labels, sensor readouts, images — each with
@@ -21,12 +21,19 @@ from typing import Any
 
 
 def _default_config_dir() -> Path:
-    """Platform-aware config directory."""
+    """Platform-aware config directory (with one-time migration from 'turzx')."""
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / "turzx"
+    new = base / "open-turzx"
+    old = base / "turzx"
+    if not new.exists() and old.is_dir():
+        try:
+            old.rename(new)
+        except OSError:
+            return old  # migration failed — keep using the old dir
+    return new
 
 
 def sanitize_layout_name(name: str) -> str:
@@ -391,7 +398,7 @@ def default_layout() -> Layout:
         # Title
         LayoutElement(
             type="text",
-            text="TURZX Monitor",
+            text="Open-Turzx",
             x=240,
             y=22,
             z=0,

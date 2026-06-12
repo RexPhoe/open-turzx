@@ -6,6 +6,19 @@
 
 ---
 
+## [2026-06-12] Renombrado a Open-Turzx (distribución)
+
+Por recomendación legal (riesgo de confusión de marca), el proyecto pasa de "TURZX" a **Open-Turzx**:
+
+- Paquete Python: `turzx/` → `open_turzx/` (`python -m open_turzx`; comando pip: `open-turzx`)
+- Distribución PyPI (pyproject): `turzx` → `open-turzx`
+- Scripts: `run_turzx.sh` → `run_open-turzx.sh` (ídem `_settings`); venv movido a `.venv/` en la raíz
+- Config de usuario: `~/.config/turzx/` → `~/.config/open-turzx/` (migración automática al arrancar)
+- README: disclaimer de no afiliación + tabla comparativa con el software oficial
+- "TURZX" se mantiene SOLO para referirse al hardware (uso nominativo): VID/PID, regla udev `99-turzx.rules`, rutas internas de logs (`/tmp/turzx_logs` se conserva para no romper MangoHud.conf existentes)
+
+---
+
 ## ESTADO GLOBAL DEL PROYECTO
 
 | Aspecto | Estado | Detalle |

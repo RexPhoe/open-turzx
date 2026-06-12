@@ -1,5 +1,5 @@
 """
-turzx/ui/main_window.py — Configuration window with visual editor
+open_turzx/ui/main_window.py — Configuration window with visual editor
 =================================================================
 Integrates the drag-and-drop canvas editor, properties panel,
 and toolbox.  The canvas shows real PIL-rendered output.
@@ -1125,7 +1125,7 @@ class ConfigWindow(QMainWindow):
         # Startup
         stg = QGroupBox(_("Startup"))
         stgl = QVBoxLayout(stg)
-        self._chk_autostart = QCheckBox(_("Run TURZX at system startup"))
+        self._chk_autostart = QCheckBox(_("Run Open-Turzx at system startup"))
         stgl.addWidget(self._chk_autostart)
         ll.addWidget(stg)
 

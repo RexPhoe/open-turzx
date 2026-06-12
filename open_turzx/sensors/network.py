@@ -1,5 +1,5 @@
 """
-turzx/sensors/network.py — Network throughput sensors via psutil
+open_turzx/sensors/network.py — Network throughput sensors via psutil
 """
 
 from __future__ import annotations

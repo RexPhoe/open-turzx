@@ -1,5 +1,5 @@
 """
-turzx/tray.py — System tray icon and context menu (PySide6)
+open_turzx/tray.py — System tray icon and context menu (PySide6)
 ===========================================================
 Provides the always-visible tray icon with:
   - Start / Pause toggle

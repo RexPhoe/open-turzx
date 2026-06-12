@@ -1,5 +1,5 @@
 """
-turzx/sensors/base.py — Sensor abstraction layer
+open_turzx/sensors/base.py — Sensor abstraction layer
 =================================================
 Defines the contract for sensor backends and the manager that
 aggregates readings from all registered backends.

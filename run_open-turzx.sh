@@ -1,10 +1,10 @@
 #!/bin/bash
-# Script para ejecutar TURZX en Linux
+# Script para ejecutar Open-Turzx en Linux
 
 set -Eeuo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$PROJECT_DIR/turzx/.venv"
+VENV_DIR="$PROJECT_DIR/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 
 # Activar entorno virtual de forma explicita. En autostart no dependemos de la shell.
@@ -29,7 +29,7 @@ fi
 # se manifiestan como cuelgues al abrir ventanas Qt.
 
 # En Hyprland/Omarchy Waybar publica el watcher de bandeja unos segundos despues
-# del autostart. Si TURZX arranca antes, Qt no registra el icono y no hay ajustes.
+# del autostart. Si Open-Turzx arranca antes, Qt no registra el icono y no hay ajustes.
 if [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] && command -v busctl >/dev/null 2>&1; then
     for _ in $(seq 1 30); do
         if busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1; then
@@ -40,7 +40,7 @@ if [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] && command -v busctl >/dev/null 2>&
 fi
 
 # Ejecutar aplicacion
-echo "Iniciando TURZX en Linux..."
+echo "Iniciando Open-Turzx en Linux..."
 echo "Dispositivo: TURZX 2.8\" USB Screen"
 cd "$PROJECT_DIR"
-exec "$VENV_PYTHON" -m turzx "$@"
+exec "$VENV_PYTHON" -m open_turzx "$@"

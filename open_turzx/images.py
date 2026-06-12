@@ -1,5 +1,5 @@
 """
-turzx/images.py — Image helpers (PIL/Pillow)
+open_turzx/images.py — Image helpers (PIL/Pillow)
 ============================================
 """
 
@@ -40,7 +40,7 @@ def solid(color, width: int = SCREEN_W, height: int = SCREEN_H) -> bytes:
 
 
 def test_pattern(
-    label: str = "TURZX",
+    label: str = "Open-Turzx",
     width: int = SCREEN_W,
     height: int = SCREEN_H,
 ) -> bytes:

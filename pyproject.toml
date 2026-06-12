@@ -3,9 +3,9 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "turzx"
+name = "open-turzx"
 version = "1.0.0"
-description = "Dashboard and driver for the TURZX 2.8\" USB screen"
+description = "Open-source dashboard and driver for the TURZX 2.8\" USB screen"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
@@ -32,11 +32,11 @@ video = [
 ]
 
 [project.scripts]
-turzx = "turzx.daemon:main"
+open-turzx = "open_turzx.daemon:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["turzx*"]
+include = ["open_turzx*"]
 
 # ── Platform setup notes ──
 #

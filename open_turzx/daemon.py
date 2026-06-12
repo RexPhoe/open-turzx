@@ -1,12 +1,12 @@
 """
-turzx/daemon.py — Main daemon: render loop, device management, tray
+open_turzx/daemon.py — Main daemon: render loop, device management, tray
 ====================================================================
 Entry point for the application.  Starts the Qt event loop,
 shows a tray icon, and runs the render thread that periodically
 sends composed frames to the TURZX screen.
 
 Usage:
-    python -m turzx
+    python -m open_turzx
     turzx              (if installed via pip)
 """
 

@@ -1,7 +1,7 @@
 """
-turzx/autostart.py — Cross-platform autostart management
+open_turzx/autostart.py — Cross-platform autostart management
 =========================================================
-Manages running TURZX at system startup.
+Manages running Open-Turzx at system startup.
 
 Linux:   XDG Autostart spec — creates/removes ~/.config/autostart/open-turzx.desktop
 Windows: Registry Run key — adds/removes HKCU/.../Run entry
@@ -33,27 +33,27 @@ def _applications_desktop_path() -> Path:
 
 
 def _exec_command() -> str:
-    """Determine the best command to launch TURZX.
+    """Determine the best command to launch Open-Turzx.
 
-    Uses the project's run_turzx.sh wrapper which activates the venv
+    Uses the project's run_open-turzx.sh wrapper which activates the venv
     and sets Qt platform plugin / library paths required for PySide6.
-    Falls back to raw python -m turzx if the script is missing.
+    Falls back to raw python -m open_turzx if the script is missing.
     """
     if sys.platform != "win32":
-        script = Path(__file__).resolve().parent.parent / "run_turzx.sh"
+        script = Path(__file__).resolve().parent.parent / "run_open-turzx.sh"
         if script.is_file():
             return str(script)
-    return f"{sys.executable} -m turzx"
+    return f"{sys.executable} -m open_turzx"
 
 
 def is_enabled() -> bool:
-    """Check if TURZX is set to run at startup."""
+    """Check if Open-Turzx is set to run at startup."""
     if sys.platform == "win32":
         try:
             import winreg
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
             try:
-                value, _ = winreg.QueryValueEx(key, "TURZX")
+                value, _ = winreg.QueryValueEx(key, "Open-Turzx")
                 return bool(value)
             except FileNotFoundError:
                 return False
@@ -66,13 +66,13 @@ def is_enabled() -> bool:
 
 
 def enable() -> bool:
-    """Enable TURZX to run at system startup. Returns True on success."""
+    """Enable Open-Turzx to run at system startup. Returns True on success."""
     if sys.platform == "win32":
         try:
             import winreg
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
             try:
-                winreg.SetValueEx(key, "TURZX", 0, winreg.REG_SZ, _exec_command())
+                winreg.SetValueEx(key, "Open-Turzx", 0, winreg.REG_SZ, _exec_command())
                 return True
             finally:
                 winreg.CloseKey(key)
@@ -83,13 +83,13 @@ def enable() -> bool:
 
 
 def disable() -> bool:
-    """Disable TURZX from running at system startup. Returns True on success."""
+    """Disable Open-Turzx from running at system startup. Returns True on success."""
     if sys.platform == "win32":
         try:
             import winreg
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
             try:
-                winreg.DeleteValue(key, "TURZX")
+                winreg.DeleteValue(key, "Open-Turzx")
                 return True
             except FileNotFoundError:
                 return True  # already removed

@@ -1,5 +1,5 @@
 """
-turzx/i18n.py — Internationalization skeleton
+open_turzx/i18n.py — Internationalization skeleton
 ===============================================
 Provides a ``_()`` function that currently returns strings unchanged.
 All user-facing UI labels should use ``_("text")`` so a future
@@ -7,7 +7,7 @@ translation backend (gettext, JSON, etc.) can be plugged in.
 
 Usage::
 
-    from turzx.i18n import _
+    from open_turzx.i18n import _
     label = _("CPU Usage")
 """
 

@@ -1,5 +1,5 @@
 """
-turzx/sensors/foreground.py — Foreground application sensor
+open_turzx/sensors/foreground.py — Foreground application sensor
 ============================================================
 Detects which window/application is currently in the foreground.
 Windows: uses win32gui (pywin32) or ctypes fallback.

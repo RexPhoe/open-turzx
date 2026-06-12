@@ -1,5 +1,5 @@
 """
-turzx/sensors/gpu.py — GPU sensors (NVIDIA via pynvml, Intel/AMD iGPU, AMD discrete)
+open_turzx/sensors/gpu.py — GPU sensors (NVIDIA via pynvml, Intel/AMD iGPU, AMD discrete)
 ====================================================================================
 Supports:
   - NVIDIA GPUs (via pynvml) - dedicated and integrated

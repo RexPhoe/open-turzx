@@ -1,5 +1,5 @@
 """
-turzx/sensors/system.py — System-level sensors (battery, uptime, clock, date, FPS)
+open_turzx/sensors/system.py — System-level sensors (battery, uptime, clock, date, FPS)
 """
 
 from __future__ import annotations

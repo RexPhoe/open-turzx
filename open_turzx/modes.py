@@ -1,5 +1,5 @@
 """
-turzx/modes.py — Display mode controller (static / rotative / reactive)
+open_turzx/modes.py — Display mode controller (static / rotative / reactive)
 ========================================================================
 ModeController lives on the main Qt thread and uses QTimers to
 auto-switch layouts.  The render thread already polls

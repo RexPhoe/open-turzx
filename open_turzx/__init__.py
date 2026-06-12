@@ -1,5 +1,5 @@
 """
-TURZX — Dashboard and driver for the TURZX 2.8" USB screen.
+Open-Turzx — Open-source dashboard and driver for the TURZX 2.8" USB screen.
 
 A system tray daemon that displays sensor data, custom layouts,
 and (future) dynamic content on the 480x480 USB display.

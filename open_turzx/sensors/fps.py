@@ -1,5 +1,5 @@
 """
-turzx/sensors/fps.py — Game FPS via RTSS shared memory (Windows) or MangoHud (Linux)
+open_turzx/sensors/fps.py — Game FPS via RTSS shared memory (Windows) or MangoHud (Linux)
 =====================================================================================
 Windows: reads real-time FPS from RTSS (RivaTuner Statistics Server) shared memory.
 Linux: reads FPS from MangoHud log files or shared memory.

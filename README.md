@@ -1,4 +1,4 @@
-# TURZX — Dashboard for the TURZX 2.8" USB Screen
+# Open-Turzx — Open-source dashboard for the TURZX 2.8" USB Screen
 
 <p align="center">
   <em>Cross-platform system monitor &amp; visual editor for the 480×480 round USB display</em>
@@ -16,11 +16,18 @@
   <a href="#license">License</a>
 </p>
 
+> [!IMPORTANT]
+> **Open-Turzx is an independent, community-developed project. It is NOT affiliated with,
+> endorsed by, or supported by TURZX or the manufacturer of the TURZX hardware.**
+> "TURZX" is used only to identify the hardware this software interoperates with
+> (nominative use). All reverse engineering was performed solely for interoperability
+> with hardware owned by the user.
+
 ---
 
 ## What is this?
 
-TURZX is an open-source driver and dashboard for the **TURZX 2.8" round USB screen** (480×480 px). The official software is closed-source and Windows-only; this project replaces it with a cross-platform Python application that includes:
+Open-Turzx is an open-source driver and dashboard for the **TURZX 2.8" round USB screen** (480×480 px). The official software is closed-source and Windows-only; this project replaces it with a cross-platform Python application that includes:
 
 - A **system tray daemon** that renders live sensor data on the screen.
 - A **drag-and-drop layout editor** to design what the screen displays.
@@ -29,16 +36,31 @@ TURZX is an open-source driver and dashboard for the **TURZX 2.8" round USB scre
 
 > **Device info:** VID `0x1CBE`, PID `0x0028`, firmware `turzx_0001_0024`, 480×480 px, USB 2.0 Bulk.
 
+## Open-Turzx vs. official software
+
+| | Official software | Open-Turzx |
+|---|---|---|
+| Platforms | Windows only | **Windows + Linux** (X11 & Wayland) |
+| Source code | Closed | **Open (MIT)** |
+| Layout editor | Fixed themes | **Free-form drag-and-drop editor** |
+| Display modes | Static | **Static, rotative, reactive (per-app)** |
+| Sensors | Basic | 26 sensors, unit conversion, threshold styles |
+| Game FPS | — | RTSS (Windows) / MangoHud (Linux) |
+| Footprint | Heavy .NET app | Lightweight Python daemon |
+| Autostart | Windows only | Windows + XDG Autostart (Linux) |
+
 ## Features
 
-- **Real-time system monitoring** — CPU (with turbo frequency), GPU (NVIDIA), RAM, disk, network, battery, uptime, clock, and game FPS via RTSS/MangoHud.
-- **Visual layout editor** — Drag-and-drop canvas that renders pixel-perfect with Pillow (same pipeline as the device). Font selection, color picker, gradients, stroke, arc/linear bars, z-order, layer locking.
-- **Backgrounds** — Solid color, image, or looping video (MP4/AVI/MKV via OpenCV). Crop and position controls.
+- **Real-time system monitoring** — CPU (with turbo frequency), GPU (NVIDIA full support; Intel/AMD partial), RAM, disk, network, battery, uptime, clock, and game FPS via RTSS/MangoHud.
+- **Visual layout editor** — Drag-and-drop canvas that renders pixel-perfect with Pillow (same pipeline as the device). Font selection, color picker, gradients, stroke, arc/linear bars, z-order, layer locking, multi-selection.
+- **Backgrounds** — Solid color, image, or looping video (MP4/AVI/MKV via OpenCV). Crop and position controls, brightness/contrast.
 - **Display modes** — Static (fixed layout), rotative (cycle with transitions), reactive (auto-switch by foreground app).
-- **Transitions** — Fade, swipe left/right/up/down between layouts.
-- **Unit conversion** — Display sensor values in your preferred unit (GHz↔MHz, °C↔°F, GB↔MB, etc.).
-- **Foreground app detection** — Knows which program is active (Windows: ctypes, Linux: xdotool).
+- **17 transitions** — Fade, dissolve, zoom, swipe, wipe, iris, blinds, checkerboard, random.
+- **Unit conversion** — Display sensor values in your preferred unit (GHz↔MHz, °C↔°F, GB↔MB, etc.), plus per-threshold value styles (e.g. red CPU temp above 80 °C).
+- **Foreground app detection** — Knows which program is active (Windows: ctypes; Linux: hyprctl on Hyprland/Wayland, xdotool on X11).
 - **Cross-platform** — Windows and Linux. macOS untested but structurally compatible.
+
+<!-- TODO: add docs/editor.gif (drag-and-drop demo) and docs/device.jpg here -->.
 
 ## Requirements
 
@@ -48,12 +70,15 @@ TURZX is an open-source driver and dashboard for the **TURZX 2.8" round USB scre
 
 ## Installation
 
+> **Packaging roadmap:** publication on **PyPI** (`pip install open-turzx`) and the
+> **AUR** (`open-turzx`) is planned. Until then, install from source as shown below.
+
 ### Windows
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USER/turzx.git
-cd turzx
+git clone https://github.com/RexPhoe/open-turzx.git
+cd open-turzx
 
 # Create a virtual environment
 python -m venv .venv
@@ -71,8 +96,8 @@ pip install -e ".[gpu,video]"
 The project includes bash launchers that handle the virtual environment and display server readiness:
 
 ```bash
-./run_turzx.sh           # Start the daemon (tray icon)
-./run_turzx_settings.sh  # Open directly into the settings editor
+./run_open-turzx.sh           # Start the daemon (tray icon)
+./run_open-turzx_settings.sh  # Open directly into the settings editor
 ```
 
 > **Note:** If the device is not detected, you may need to install a WinUSB/libusb driver via [Zadig](https://zadig.akeo.ie/) or `pip install libusb`.
@@ -84,10 +109,10 @@ The project includes bash launchers that handle the virtual environment and disp
 sudo pacman -S libusb python-pyusb python-pillow python-pycryptodome python-psutil pyside6
 
 # Clone and install
-git clone https://github.com/YOUR_USER/turzx.git
-cd turzx
-python -m venv turzx/.venv --system-site-packages
-source turzx/.venv/bin/activate
+git clone https://github.com/RexPhoe/open-turzx.git
+cd open-turzx
+python -m venv .venv --system-site-packages
+source .venv/bin/activate
 pip install -e ".[gpu]"
 ```
 
@@ -95,10 +120,10 @@ pip install -e ".[gpu]"
 
 ```bash
 sudo apt install libusb-1.0-0-dev python3-venv
-git clone https://github.com/YOUR_USER/turzx.git
-cd turzx
-python3 -m venv turzx/.venv
-source turzx/.venv/bin/activate
+git clone https://github.com/RexPhoe/open-turzx.git
+cd open-turzx
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[gpu]"
 ```
 
@@ -114,17 +139,17 @@ pip install -e ".[gpu]"
 
 ```bash
 # Run the daemon (system tray icon appears)
-./run_turzx.sh
+./run_open-turzx.sh
 
 # Open settings directly
-./run_turzx_settings.sh
+./run_open-turzx_settings.sh
 
 # Or from the command line with the virtual environment:
-source turzx/.venv/bin/activate
-python -m turzx
+source .venv/bin/activate
+python -m open_turzx
 
 # Or, if installed via pip:
-turzx
+open-turzx
 ```
 
 The application starts minimized in the **system tray**. Right-click the tray icon for:
@@ -151,6 +176,7 @@ The visual editor is a three-panel window:
 | `text` | Static text label |
 | `sensor` | Live sensor value with format string (e.g. `{label}: {value}{unit}`) |
 | `image` | PNG/JPG image overlay |
+| `shape` | Rectangle, circle, ellipse or line (fill, alpha, gradient, stroke) |
 | `bar` | Linear progress bar (4 directions: right, left, up, down) |
 | `arc_bar` | Circular arc progress bar |
 
@@ -186,7 +212,7 @@ Configurable duration (0.1–3.0 s).
 | **Network** | `net.down_mbps`, `net.up_mbps` | All |
 | **GPU** | `gpu.name`, `gpu.percent`, `gpu.temp`, `gpu.mem_gb`, `gpu.mem_total_gb`, `gpu.mem_percent`, `gpu.clock_mhz`, `gpu.mem_clock_mhz`, `gpu.fan`, `gpu.power_w` | NVIDIA (pynvml) |
 | **System** | `sys.uptime_h`, `sys.clock`, `sys.date`, `sys.battery` | All |
-| **Foreground** | `app.process`, `app.window_title` | Windows (ctypes); Linux partial (xdotool, X11) |
+| **Foreground** | `app.process`, `app.window_title` | Windows (ctypes); Linux (hyprctl on Hyprland, xdotool on X11). Also `app.window_class`, `app.pid` on Linux |
 | **FPS** | `fps.current`, `sys.fps` | Windows (RTSS / MSI Afterburner shared memory), Linux (MangoHud logs) |
 
 > `sys.clock` and `sys.date` are real-time sensors — they update every frame, not at the sensor poll rate.
@@ -208,18 +234,18 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 | Feature | Linux status |
 |---|---|
 | USB device | ✅ libusb (system package) |
-| Config directory | ✅ `$XDG_CONFIG_HOME/turzx/` |
+| Config directory | ✅ `$XDG_CONFIG_HOME/open-turzx/` |
 | CPU temp | ✅ `psutil.sensors_temperatures()` (coretemp / k10temp) |
 | CPU turbo freq | ⚠️ Fallback to `psutil.cpu_freq()` (no PDH on Linux) |
 | GPU (NVIDIA) | ✅ pynvml (requires NVIDIA driver) |
-| Foreground app | ⚠️ X11 only (xdotool); Wayland not yet supported |
+| Foreground app | ✅ Hyprland (hyprctl) and X11 (xdotool) |
 | FPS sensor | ✅ MangoHud logs |
 | System tray | ⚠️ GNOME requires [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) |
 
 ## Architecture
 
 ```
-turzx/
+open_turzx/
 ├── protocol.py        # DES-CBC encryption, packet building (pure, no I/O)
 ├── device.py          # USB I/O: connect, send commands, send images
 ├── images.py          # Pillow helpers: JPEG encode, rotation, solid/test_pattern
@@ -243,8 +269,7 @@ turzx/
 │   └── units.py       # Unit conversion tables
 └── ui/
     ├── main_window.py # Three-panel config window (editor + properties + layout list)
-    ├── editor.py       # QGraphicsScene canvas, drag-and-drop, layer lock
-    └── preview.py      # (Legacy — unused, kept for reference)
+    └── editor.py      # QGraphicsScene canvas, drag-and-drop, layer lock
 ```
 
 ### Render pipeline
@@ -282,23 +307,23 @@ Full protocol documentation and development history: [`DEVLOG.md`](DEVLOG.md)
 ## Known Limitations
 
 - **Device firmware freeze:** Sending more than ~5-6 commands rapidly can lock the firmware. Only recoverable via physical USB replug. The daemon uses a minimal init sequence to avoid this.
-- **NVIDIA GPUs only:** AMD/Intel GPU monitoring is not implemented (stubs exist).
+- **GPU monitoring:** Full support for NVIDIA (pynvml); Intel iGPU and AMD support is partial (lspci/sysfs/rocm-smi).
 - **FPS sensor (Windows only):** Requires [MSI Afterburner](https://www.msi.com/Landing/afterburner) with RTSS running.
-- **Wayland:** Foreground app detection requires X11 (xdotool). Wayland support is planned.
+- **Wayland:** Foreground app detection currently supports Hyprland (hyprctl) and X11 (xdotool); other Wayland compositors are not yet covered.
 - **Single device:** Only one TURZX screen is supported at a time.
 
 ## Development
 
 ```bash
 pip install -e ".[dev,gpu,video]"
-python -m turzx
+python -m open_turzx
 ```
 
 The full development history, protocol reverse-engineering notes, hardware quirks, and bug analysis are documented in [`DEVLOG.md`](DEVLOG.md).
 
 ## Third-party Licenses
 
-TURZX depends on the following open-source libraries:
+Open-Turzx depends on the following open-source libraries:
 
 | Library | License |
 |---|---|

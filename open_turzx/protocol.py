@@ -1,5 +1,5 @@
 """
-turzx/protocol.py — Pure protocol layer (no USB, fully cross-platform)
+open_turzx/protocol.py — Pure protocol layer (no USB, fully cross-platform)
 =======================================================================
 All cryptography, packet building, and protocol logic.
 No side effects, no USB I/O, easily testable.

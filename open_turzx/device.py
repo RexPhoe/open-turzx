@@ -1,5 +1,5 @@
 """
-turzx/device.py — USB I/O layer (Linux/Arch first, Windows fallback)
+open_turzx/device.py — USB I/O layer (Linux/Arch first, Windows fallback)
 =====================================================================
 Handles USB connection, read/write, and all high-level commands.
 Uses system libusb on Linux — no DLL path required.

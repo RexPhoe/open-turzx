@@ -1,11 +1,11 @@
-# TURZX - Guía de Configuración para Linux
+# Open-Turzx - Guía de Configuración para Linux
 
 ## ✅ Estado Actual
 
-El proyecto **TURZX** ha sido **adaptado exitosamente para Linux**. Todos los componentes funcionan correctamente:
+El proyecto **Open-Turzx** ha sido **adaptado exitosamente para Linux**. Todos los componentes funcionan correctamente:
 
 - ✅ Python 3.14.4 (requería ≥ 3.10)
-- ✅ Entorno virtual configurado en `turzx/.venv/`
+- ✅ Entorno virtual configurado en `.venv/`
 - ✅ Todas las dependencias instaladas
 - ✅ Módulos importan sin errores
 - ✅ Dispositivo USB detectado (VID: 0x1CBE, PID: 0x0028)
@@ -36,9 +36,9 @@ shiboken6==6.11.1         # Binding Qt
 ### Opción 1: Script Automático (recomendado)
 
 ```bash
-cd $HOME/repos/TURZX
-./run_turzx.sh             # Inicia el daemon (icono en bandeja)
-./run_turzx_settings.sh    # Abre directamente el editor de ajustes
+cd $HOME/repos/open-turzx
+./run_open-turzx.sh             # Inicia el daemon (icono en bandeja)
+./run_open-turzx_settings.sh    # Abre directamente el editor de ajustes
 ```
 
 Los scripts activan automáticamente el entorno virtual, esperan a que el sistema de bandeja
@@ -48,9 +48,9 @@ No requieren manipular manualmente variables de Qt o libusb.
 ### Opción 2: Línea de Comandos
 
 ```bash
-cd $HOME/repos/TURZX
-source turzx/.venv/bin/activate
-python -m turzx
+cd $HOME/repos/open-turzx
+source .venv/bin/activate
+python -m open_turzx
 ```
 
 ### Opción 3: Con Display Gráfico (si hay servidor X11/Wayland)
@@ -58,7 +58,7 @@ python -m turzx
 ```bash
 # Con display gráfico disponible, la UI de tray se mostrará automáticamente
 export DISPLAY=:0  # Ajusta según tu sesión
-./run_turzx.sh
+./run_open-turzx.sh
 ```
 
 ## 🔐 Permisos USB (Importante)
@@ -80,12 +80,12 @@ sudo udevadm trigger
 Si no configuras las reglas, deberás ejecutar con:
 
 ```bash
-sudo ./run_turzx.sh
+sudo ./run_open-turzx.sh
 ```
 
 ## 🛠️ Cambios Realizados para Linux
 
-### Archivo: `turzx/daemon.py`
+### Archivo: `open_turzx/daemon.py`
 
 Se agregó soporte para ejecución headless (sin display gráfico):
 
@@ -109,15 +109,15 @@ if sys.platform == "linux" or sys.platform == "linux2":
 Para verificar que todo funciona correctamente:
 
 ```bash
-cd $HOME/repos/TURZX
-source turzx/.venv/bin/activate
+cd $HOME/repos/open-turzx
+source .venv/bin/activate
 python /tmp/test_turzx.py
 ```
 
 Resultado esperado:
 ```
 ============================================================
-TURZX Linux Compatibility Test
+Open-Turzx Linux Compatibility Test
 ============================================================
 
 1. Platform Detection:
@@ -165,8 +165,8 @@ Sin `xdotool`, la aplicación seguirá funcionando pero la detección de ventana
 Si tienes GPU NVIDIA y deseas monitoreo de CUDA:
 
 ```bash
-source turzx/.venv/bin/activate
-pip install "turzx[gpu]"
+source .venv/bin/activate
+pip install -e ".[gpu]"
 ```
 
 Esto instala `pynvml` para lectura de sensores NVIDIA.
@@ -182,11 +182,11 @@ El código se ha probado y es compatible con:
 
 ## 📝 Troubleshooting
 
-### Error: "No module named 'turzx'"
+### Error: "No module named 'open_turzx'"
 
 ```bash
 # Asegúrate de estar en el entorno virtual correcto
-source turzx/.venv/bin/activate
+source .venv/bin/activate
 # Reinstala en modo editable
 pip install -e .
 ```
@@ -213,7 +213,7 @@ Configura las reglas udev como se describe arriba, o ejecuta con `sudo`.
 Esto es esperado en modo headless. Verifica los logs:
 
 ```bash
-python -m turzx 2>&1 | tee turzx.log
+python -m open_turzx 2>&1 | tee open-turzx.log
 ```
 
 ### Warning "invalid style override 'kvantum' passed" al iniciar
@@ -244,7 +244,7 @@ Si MangoHud está en pantalla pero no escribe logs:
 
 ## 🎮 Contador de FPS en Juegos (MangoHud)
 
-TURZX puede mostrar los FPS de juegos en Linux a través de **MangoHud**.
+Open-Turzx puede mostrar los FPS de juegos en Linux a través de **MangoHud**.
 
 ### Requisitos
 
@@ -289,9 +289,9 @@ MANGOHUD=1 MANGOHUD_CONFIG=fps_only,alpha=0,background_alpha=0,font_size=1,log_i
 
 ### Cómo funciona
 
-TURZX comprueba en orden:
+Open-Turzx comprueba en orden:
 1. El archivo `/tmp/turzx_fps.log` (log dedicado)
-2. El directorio `/tmp/turzx_logs/` (recomendado para TURZX)
+2. El directorio `/tmp/turzx_logs/` (recomendado para Open-Turzx)
 3. El directorio `~/mangohud_logs/` (logs por defecto de MangoHud)
 4. CSV recientes en `$HOME` y `/tmp`
 5. Memoria compartida de MangoHud
@@ -300,7 +300,7 @@ Si MangoHud está corriendo pero no hay juego activo, mostrará **0 FPS**.
 
 ## 🚀 Inicio Automático del Sistema
 
-TURZX incluye una opción en **Settings → Startup** para iniciar automáticamente al arrancar el sistema.
+Open-Turzx incluye una opción en **Settings → Startup** para iniciar automáticamente al arrancar el sistema.
 
 Esto usa el estándar **XDG Autostart** (compatible con GNOME, KDE, XFCE, Hyprland y otros):
 - Al activar: se crea `~/.config/autostart/open-turzx.desktop` (arranque automático)
@@ -315,7 +315,7 @@ Si prefieres gestionarlo manualmente, puedes crear `~/.config/autostart/open-tur
 Type=Application
 Name=Open-Turzx
 Comment=Open-Turzx - driver for the TURZX 2.8" USB Screen
-Exec=$HOME/repos/TURZX/run_turzx.sh
+Exec=$HOME/repos/open-turzx/run_open-turzx.sh
 StartupNotify=false
 Terminal=false
 Categories=Utility;
@@ -324,7 +324,7 @@ X-GNOME-Autostart-enabled=true
 
 ## ✨ Conclusión
 
-TURZX ahora es **completamente funcional en Linux**. La aplicación:
+Open-Turzx ahora es **completamente funcional en Linux**. La aplicación:
 
 1. Se inicia sin errores
 2. Detecta el dispositivo USB

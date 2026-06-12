@@ -1,5 +1,5 @@
 """
-turzx/renderer.py — Composites a Layout + sensor values into a screen image
+open_turzx/renderer.py — Composites a Layout + sensor values into a screen image
 ===========================================================================
 Two-layer architecture for smooth 60 FPS video playback:
 

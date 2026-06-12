@@ -1,5 +1,5 @@
 """
-turzx/sensors/disk.py — Disk sensors via psutil
+open_turzx/sensors/disk.py — Disk sensors via psutil
 """
 
 from __future__ import annotations

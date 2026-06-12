@@ -1,5 +1,5 @@
 """
-turzx/sensors/cpu.py — CPU sensors via psutil
+open_turzx/sensors/cpu.py — CPU sensors via psutil
 """
 
 from __future__ import annotations

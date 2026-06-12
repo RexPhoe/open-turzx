@@ -1,5 +1,5 @@
 """
-turzx/sensors/memory.py — RAM sensors via psutil
+open_turzx/sensors/memory.py — RAM sensors via psutil
 """
 
 from __future__ import annotations

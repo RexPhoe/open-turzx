@@ -1,5 +1,5 @@
 """
-turzx/sensors/units.py — Sensor unit conversion
+open_turzx/sensors/units.py — Sensor unit conversion
 =================================================
 Defines which units are available for each sensor and the
 conversion functions between them.  The renderer calls

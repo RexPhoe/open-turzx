@@ -1,5 +1,5 @@
 """
-turzx/ui/editor.py — Visual drag-and-drop layout editor
+open_turzx/ui/editor.py — Visual drag-and-drop layout editor
 ========================================================
 QGraphicsScene-based editor where users can add, drag, and
 configure elements on a 480x480 canvas.
