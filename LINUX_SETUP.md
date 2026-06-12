@@ -303,18 +303,18 @@ Si MangoHud está corriendo pero no hay juego activo, mostrará **0 FPS**.
 TURZX incluye una opción en **Settings → Startup** para iniciar automáticamente al arrancar el sistema.
 
 Esto usa el estándar **XDG Autostart** (compatible con GNOME, KDE, XFCE, Hyprland y otros):
-- Al activar: se crea `~/.config/autostart/turzx.desktop` (arranque automático)
-- También se crea `~/.local/share/applications/turzx.desktop` (asociación de app ID para Qt/Wayland)
+- Al activar: se crea `~/.config/autostart/open-turzx.desktop` (arranque automático)
+- También se crea `~/.local/share/applications/open-turzx.desktop` (asociación de app ID para Qt/Wayland)
 - Al desactivar: se eliminan ambos archivos
 
 ### Configuración manual
 
-Si prefieres gestionarlo manualmente, puedes crear `~/.config/autostart/turzx.desktop`:
+Si prefieres gestionarlo manualmente, puedes crear `~/.config/autostart/open-turzx.desktop`:
 ```ini
 [Desktop Entry]
 Type=Application
-Name=TURZX Monitor
-Comment=TURZX 2.8" USB Screen Monitor
+Name=Open-Turzx
+Comment=Open-Turzx - driver for the TURZX 2.8" USB Screen
 Exec=$HOME/repos/TURZX/run_turzx.sh
 StartupNotify=false
 Terminal=false

@@ -3,7 +3,7 @@ turzx/autostart.py — Cross-platform autostart management
 =========================================================
 Manages running TURZX at system startup.
 
-Linux:   XDG Autostart spec — creates/removes ~/.config/autostart/turzx.desktop
+Linux:   XDG Autostart spec — creates/removes ~/.config/autostart/open-turzx.desktop
 Windows: Registry Run key — adds/removes HKCU/.../Run entry
 """
 
@@ -24,12 +24,12 @@ def _autostart_dir() -> Path:
 
 def _desktop_path() -> Path:
     """Return the full path to the autostart desktop entry."""
-    return _autostart_dir() / "turzx.desktop"
+    return _autostart_dir() / "open-turzx.desktop"
 
 
 def _applications_desktop_path() -> Path:
     """Return the application desktop entry used by Qt/portal app id lookup."""
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "applications" / "turzx.desktop"
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "applications" / "open-turzx.desktop"
 
 
 def _exec_command() -> str:
@@ -116,8 +116,8 @@ def _create_linux_desktop_entries() -> bool:
 
         common_content = f"""[Desktop Entry]
 Type=Application
-Name=TURZX Monitor
-Comment=TURZX 2.8" USB Screen Monitor
+Name=Open-Turzx
+Comment=Open-Turzx - driver for the TURZX 2.8" USB Screen
 Exec={_exec_command()}
 StartupNotify=false
 Terminal=false
