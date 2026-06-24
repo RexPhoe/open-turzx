@@ -35,3 +35,6 @@ assets/videos/*
 
 # Auditorías internas (no subir a GitHub)
 auditorias/
+
+# Bridge secrets
+bridge/.env
