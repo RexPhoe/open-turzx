@@ -202,7 +202,7 @@ Configurable duration (0.1–3.0 s).
 
 ## Sensors
 
-26 sensors available across 8 backends:
+29 sensors available across 9 backends:
 
 | Backend | Sensors | Platform |
 |---|---|---|
@@ -211,11 +211,35 @@ Configurable duration (0.1–3.0 s).
 | **Disk** | `disk.percent`, `disk.used_gb`, `disk.total_gb` | All |
 | **Network** | `net.down_mbps`, `net.up_mbps` | All |
 | **GPU** | `gpu.name`, `gpu.percent`, `gpu.temp`, `gpu.mem_gb`, `gpu.mem_total_gb`, `gpu.mem_percent`, `gpu.clock_mhz`, `gpu.mem_clock_mhz`, `gpu.fan`, `gpu.power_w` | NVIDIA (pynvml) |
+| **Power** | `power.cpu_w`, `power.gpu_w`, `power.system_w` | All — **hybrid estimate** (see note below) |
 | **System** | `sys.uptime_h`, `sys.clock`, `sys.date`, `sys.battery` | All |
 | **Foreground** | `app.process`, `app.window_title` | Windows (ctypes); Linux (hyprctl on Hyprland, xdotool on X11). Also `app.window_class`, `app.pid` on Linux |
 | **FPS** | `fps.current`, `sys.fps` | Windows (RTSS / MSI Afterburner shared memory), Linux (MangoHud logs) |
 
 > `sys.clock` and `sys.date` are real-time sensors — they update every frame, not at the sensor poll rate.
+
+### Power sensor — read this before using it
+
+`power.system_w` reports the **estimated** whole-machine power draw. A true
+wall-socket figure cannot be obtained from software alone, so it is computed
+as `cpu_w + gpu_w + baseline`, mixing *real* sensor readings (where the OS
+exposes them) with *estimates* for the rest:
+
+| Component | Real source | Estimate fallback |
+|---|---|---|
+| `power.gpu_w` | NVIDIA NVML (Win/Linux) · AMD `amdgpu` hwmon · Afterburner (Win) | — |
+| `power.cpu_w` | Linux RAPL · zenpower/amd_energy hwmon · Afterburner (Win) | `idle + load%·(TDP−idle)` |
+| baseline | — | constant (RAM, board, drives, fans, PSU losses) |
+
+**Peculiarity — accurate CPU power needs extra permissions.** On Linux the
+RAPL energy counter (`/sys/class/powercap/intel-rapl:*/energy_uj`) is
+**root-only by default** (CVE-2020-8694), so without the setup below the CPU
+figure is the load/TDP *estimate*, not a measurement. The GPU figure is real
+out of the box on NVIDIA. See [Linux Setup → Accurate CPU power](#accurate-cpu-power-rapl-optional).
+
+Tunables (environment variables, used only by the estimate path):
+`OPEN_TURZX_CPU_TDP` (default 65), `OPEN_TURZX_CPU_IDLE` (default 8),
+`OPEN_TURZX_POWER_BASELINE` (default 40).
 
 ## Linux Setup
 
@@ -229,6 +253,39 @@ echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="1cbe", ATTR{idProduct}=="0028", MODE="0
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
+### Accurate CPU power (RAPL) — optional
+
+The `power.cpu_w` / `power.system_w` sensors fall back to a load/TDP estimate
+because the Linux RAPL energy counter is root-only by default. To switch the
+CPU figure to a **real measurement**, grant the daemon read access to RAPL.
+
+A versioned udev rule and a one-shot installer ship in `scripts/`:
+
+```bash
+# Installs /etc/udev/rules.d/99-open-turzx-rapl.rules, reloads udev,
+# and applies it immediately for the current boot.
+sudo bash scripts/install_rapl_access.sh
+```
+
+This runs `chmod a+r` on `/sys/class/powercap/intel-rapl:*/energy_uj`. The
+udev rule re-applies on every boot. Verify it worked:
+
+```bash
+cat /sys/class/powercap/intel-rapl:0/energy_uj   # should print a number, not "Permission denied"
+```
+
+Then restart Open-Turzx so the sensor picks up RAPL (no code change needed).
+
+> **⚠️ Risk / why it is opt-in.** Making the RAPL energy counter world-readable
+> re-opens **CVE-2020-8694**: a fine-grained power side-channel that, in
+> theory, can leak secrets (e.g. crypto keys) from other processes via power
+> analysis. It also requires **root once** to install the rule. This is an
+> acceptable tradeoff on a personal/single-user desktop, but **do not apply it
+> on shared or multi-user machines**. To revoke: `sudo rm
+> /etc/udev/rules.d/99-open-turzx-rapl.rules` and reboot (the kernel restores
+> the `0400 root` permission). Without this rule everything still works — the
+> CPU figure is simply an estimate.
+
 ### Platform notes
 
 | Feature | Linux status |
@@ -238,6 +295,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 | CPU temp | ✅ `psutil.sensors_temperatures()` (coretemp / k10temp) |
 | CPU turbo freq | ⚠️ Fallback to `psutil.cpu_freq()` (no PDH on Linux) |
 | GPU (NVIDIA) | ✅ pynvml (requires NVIDIA driver) |
+| Power draw | ✅ GPU real (NVML/amdgpu); CPU real with [RAPL setup](#accurate-cpu-power-rapl-optional), otherwise estimated |
 | Foreground app | ✅ Hyprland (hyprctl) and X11 (xdotool) |
 | FPS sensor | ✅ MangoHud logs |
 | System tray | ⚠️ GNOME requires [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) |

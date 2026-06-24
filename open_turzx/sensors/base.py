@@ -48,6 +48,7 @@ class SensorManager:
         from .network import NetworkSensors
         from .system import SystemSensors
         from .gpu import GpuSensors
+        from .power import PowerSensors
         from .foreground import ForegroundSensor
         from .fps import FpsSensor
 
@@ -58,6 +59,7 @@ class SensorManager:
             NetworkSensors,
             SystemSensors,
             GpuSensors,
+            PowerSensors,
             ForegroundSensor,
             FpsSensor,
         ]:

@@ -567,6 +567,18 @@ def default_layout() -> Layout:
             color=[180, 140, 200],
             format="{label}: {value}{unit}",
         ),
+        # Estimated total system power
+        LayoutElement(
+            type="sensor",
+            sensor_id="power.system_w",
+            x=240,
+            y=350,
+            z=1,
+            label="System",
+            font_size=14,
+            color=[200, 170, 120],
+            format="{label}: {value}{unit}",
+        ),
         # Foreground app
         LayoutElement(
             type="sensor",

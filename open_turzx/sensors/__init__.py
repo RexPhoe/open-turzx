@@ -7,6 +7,7 @@ from .disk import DiskSensors
 from .network import NetworkSensors
 from .system import SystemSensors
 from .gpu import GpuSensors
+from .power import PowerSensors
 
 __all__ = [
     "SensorReading",
@@ -18,4 +19,5 @@ __all__ = [
     "NetworkSensors",
     "SystemSensors",
     "GpuSensors",
+    "PowerSensors",
 ]

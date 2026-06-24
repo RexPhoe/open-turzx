@@ -6,6 +6,33 @@
 
 ---
 
+## [2026-06-24] Sensor de consumo en vatios (backend Power)
+
+Nuevo `open_turzx/sensors/power.py` (`PowerSensors`), cross-platform (Windows + Linux).
+Expone `power.cpu_w`, `power.gpu_w` y `power.system_w` (total estimado del equipo):
+`system_w = cpu_w + gpu_w + baseline`.
+
+- **Por qué es estimación:** el consumo real a la pared no es medible solo por software.
+  Se combinan lecturas reales (donde el SO las expone) con estimación para el resto.
+- **GPU:** real vía NVML (NVIDIA, Win+Linux) → hwmon `amdgpu` → Afterburner (Win).
+- **CPU:** RAPL (Linux) → hwmon zenpower/amd_energy → Afterburner (Win) → estimación
+  `idle + carga%·(TDP−idle)`. La carga se calcula con un delta propio de
+  `psutil.cpu_times()` para no interferir con el `cpu_percent` global de `CpuSensors`.
+- **Peculiaridad RAPL:** `/sys/class/powercap/intel-rapl:*/energy_uj` es `0400 root`
+  (CVE-2020-8694). Sin permisos → CPU estimada. Script `scripts/install_rapl_access.sh`
+  + regla `scripts/99-open-turzx-rapl.rules` para activar la lectura real (riesgo:
+  reabre el canal lateral de potencia; solo para equipos personales).
+- **Tunables (env):** `OPEN_TURZX_CPU_TDP` (65), `OPEN_TURZX_CPU_IDLE` (8),
+  `OPEN_TURZX_POWER_BASELINE` (40). TDP se auto-ajusta si RAPL deja leer su constraint.
+- **Integración:** registrado en `sensors/base.py` y `sensors/__init__.py`; `power.system_w`
+  añadido al `default_layout()`. La UI/editor listan los sensores dinámicamente.
+- **Verificado** (Ryzen 9 7900 + RTX 5080): tras instalar la regla, `cpu_w` real vía RAPL
+  (reposo ≈ 8 W, plena carga → TDP); GPU real ≈ 29 W; sistema ≈ 77 W.
+- Docs: README (sección *Power sensor* + *Accurate CPU power (RAPL)*) y LINUX_SETUP
+  (sección ⚡ con riesgos y reversión).
+
+---
+
 ## [2026-06-12] Renombrado a Open-Turzx (distribución)
 
 Por recomendación legal (riesgo de confusión de marca), el proyecto pasa de "TURZX" a **Open-Turzx**:

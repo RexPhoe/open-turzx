@@ -83,6 +83,69 @@ Si no configuras las reglas, deberás ejecutar con:
 sudo ./run_open-turzx.sh
 ```
 
+## ⚡ Sensor de Consumo en Vatios (peculiaridades)
+
+El backend **Power** expone tres sensores: `power.cpu_w`, `power.gpu_w` y
+`power.system_w` (consumo total **estimado** del equipo). No es una medida a la
+pared: por software puro no es posible. Se calcula como:
+
+```
+power.system_w = cpu_w + gpu_w + baseline
+```
+
+mezclando lecturas **reales** (donde el sistema las expone) con **estimaciones**:
+
+| Componente | Fuente real | Fallback (estimación) |
+|---|---|---|
+| `power.gpu_w` | NVIDIA NVML · hwmon `amdgpu` · Afterburner (Win) | — |
+| `power.cpu_w` | Linux RAPL · hwmon zenpower/amd_energy · Afterburner (Win) | `idle + carga%·(TDP−idle)` |
+| baseline | — | constante (RAM, placa, discos, ventiladores, pérdidas de PSU) |
+
+La GPU NVIDIA da potencia **real sin configurar nada**. La **peculiaridad está
+en la CPU**: en Linux el contador RAPL es `root`-only por defecto.
+
+### Activar la lectura REAL de la CPU (RAPL)
+
+`/sys/class/powercap/intel-rapl:*/energy_uj` tiene permisos `0400 root`
+(CVE-2020-8694). Sin el paso siguiente, `power.cpu_w` usa la **estimación**
+por carga/TDP, no una medida. Para activar la medida real:
+
+```bash
+# Instala /etc/udev/rules.d/99-open-turzx-rapl.rules, recarga udev
+# y aplica el permiso de inmediato para el arranque actual.
+sudo bash scripts/install_rapl_access.sh
+```
+
+Comprobar que funcionó (debe imprimir un número, no "Permission denied"):
+
+```bash
+cat /sys/class/powercap/intel-rapl:0/energy_uj
+```
+
+Después **reinicia Open-Turzx** para que el sensor tome RAPL (sin tocar código).
+La regla udev se re-aplica en cada arranque, así que el cambio persiste.
+
+> **⚠️ Riesgos / por qué es opcional**
+> - **Requiere `root` una vez** para instalar la regla udev.
+> - Hace el contador RAPL **legible por todos**, reabriendo **CVE-2020-8694**:
+>   un canal lateral de potencia que, en teoría, permite inferir secretos
+>   (p. ej. claves criptográficas) de otros procesos por análisis de consumo.
+> - Tradeoff **aceptable en un equipo personal de un solo usuario**; **no lo
+>   apliques en máquinas compartidas/multiusuario**.
+> - Revertir: `sudo rm /etc/udev/rules.d/99-open-turzx-rapl.rules` y reiniciar
+>   (el kernel restaura `0400 root`).
+> - Sin la regla, **todo sigue funcionando**: el dato de CPU es solo una estimación.
+
+### Ajustes de la estimación (variables de entorno)
+
+Solo afectan al camino de estimación (cuando no hay sensor real de CPU):
+
+| Variable | Defecto | Significado |
+|---|---|---|
+| `OPEN_TURZX_CPU_TDP` | 65 | Presupuesto de potencia sostenida de la CPU (W) |
+| `OPEN_TURZX_CPU_IDLE` | 8 | Potencia de la CPU en reposo (W) |
+| `OPEN_TURZX_POWER_BASELINE` | 40 | Resto del sistema: RAM, placa, discos, ventiladores, PSU (W) |
+
 ## 🛠️ Cambios Realizados para Linux
 
 ### Archivo: `open_turzx/daemon.py`

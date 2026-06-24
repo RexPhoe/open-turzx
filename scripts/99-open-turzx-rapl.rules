@@ -1,0 +1,16 @@
+# Open-Turzx — grant read access to RAPL energy counters
+# =======================================================
+# The powercap RAPL interface exposes CPU package energy at
+#   /sys/class/powercap/intel-rapl:*/energy_uj
+# which is root-only by default (CVE-2020-8694: the counter enables a
+# power side-channel). Relaxing it to world-readable lets the Open-Turzx
+# user daemon report *real* CPU package power instead of an estimate.
+# Accepted tradeoff for a personal desktop.
+#
+# Install:
+#   sudo cp scripts/99-open-turzx-rapl.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=powercap
+#
+# Applies on every (re)appearance of an intel-rapl domain (Intel and AMD
+# both register under the intel-rapl* kernel names).
+ACTION=="add|change", SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", RUN+="/usr/bin/chmod -f a+r /sys%p/energy_uj"
