@@ -11,50 +11,44 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QIcon, QPixmap, QColor, QPainter, QFont
+from pathlib import Path
+
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .i18n import _
+
+_ASSETS_DIR = Path(__file__).parent / "assets" / "tray"
 
 if TYPE_CHECKING:
     from .daemon import TurzxDaemon
 
 
 def _make_icon() -> QIcon:
-    """Generate the Open-Turzx tray icon programmatically (brand mark: "OT" monogram).
+    """Load the Open-Turzx tray icon from the bundled brand assets.
 
-    Drawn vectorially at a few sizes so Qt always has a crisp pixmap to pick
-    from regardless of panel DPI/scale, instead of shipping a bundled raster
-    asset. Kept deliberately simple (flat circle + bold two-letter mark, no
-    fine detail) because system tray icons typically render at 16-24px,
-    where thin strokes/glows/gradients turn to mush.
+    Two variants ship, swapped by pixel size:
+      - "simple" (flat navy circle + bold "OT", no fine detail): used for
+        16/20px, the sizes most desktop panels actually request for tray
+        icons. The full brand mark's thin strokes/glow turn to mush there.
+      - "full" (the approved brand mark: OT monogram + sensor-wave motif):
+        used from 24px up, where it still reads correctly.
+
+    Bundled as static PNGs rather than drawn via QPainter, because the
+    full mark's soft glow/gradient isn't practical to reproduce
+    procedurally. Qt picks whichever size best matches what the panel/DPI
+    actually requests.
     """
     icon = QIcon()
-    # Brand palette (matches the social/avatar mark): dark navy badge,
-    # muted light-blue "OT" monogram.
-    bg_color = QColor(23, 36, 52)
-    outline_color = QColor(17, 26, 39)
-    text_color = QColor(127, 158, 200)
 
-    for size in (64, 32, 24, 16):
-        pixmap = QPixmap(size, size)
-        pixmap.fill(QColor(0, 0, 0, 0))
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    for size in (16, 20):
+        path = _ASSETS_DIR / f"icon_simple_{size}.png"
+        icon.addFile(str(path), QSize(size, size))
 
-        margin = max(1, size // 32)
-        painter.setBrush(bg_color)
-        painter.setPen(outline_color)
-        painter.drawEllipse(margin, margin, size - 2 * margin, size - 2 * margin)
-
-        painter.setPen(text_color)
-        font = QFont("Arial", max(6, int(size * 0.40)), QFont.Weight.Bold)
-        painter.setFont(font)
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "OT")
-        painter.end()
-
-        icon.addPixmap(pixmap)
+    for size in (24, 32, 48, 64, 128):
+        path = _ASSETS_DIR / f"icon_full_{size}.png"
+        icon.addFile(str(path), QSize(size, size))
 
     return icon
 

@@ -38,6 +38,9 @@ open-turzx = "open_turzx.daemon:main"
 where = ["."]
 include = ["open_turzx*"]
 
+[tool.setuptools.package-data]
+open_turzx = ["assets/tray/*.png"]
+
 # ── Platform setup notes ──
 #
 # Windows:
