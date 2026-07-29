@@ -22,20 +22,41 @@ if TYPE_CHECKING:
 
 
 def _make_icon() -> QIcon:
-    """Generate a simple tray icon programmatically."""
-    size = 64
-    pixmap = QPixmap(size, size)
-    pixmap.fill(QColor(0, 0, 0, 0))
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QColor(0, 180, 255))
-    painter.setPen(QColor(0, 120, 200))
-    painter.drawRoundedRect(4, 4, size - 8, size - 8, 10, 10)
-    painter.setPen(QColor(255, 255, 255))
-    painter.setFont(QFont("Arial", 28, QFont.Weight.Bold))
-    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "T")
-    painter.end()
-    return QIcon(pixmap)
+    """Generate the Open-Turzx tray icon programmatically (brand mark: "OT" monogram).
+
+    Drawn vectorially at a few sizes so Qt always has a crisp pixmap to pick
+    from regardless of panel DPI/scale, instead of shipping a bundled raster
+    asset. Kept deliberately simple (flat circle + bold two-letter mark, no
+    fine detail) because system tray icons typically render at 16-24px,
+    where thin strokes/glows/gradients turn to mush.
+    """
+    icon = QIcon()
+    # Brand palette (matches the social/avatar mark): dark navy badge,
+    # muted light-blue "OT" monogram.
+    bg_color = QColor(23, 36, 52)
+    outline_color = QColor(17, 26, 39)
+    text_color = QColor(127, 158, 200)
+
+    for size in (64, 32, 24, 16):
+        pixmap = QPixmap(size, size)
+        pixmap.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        margin = max(1, size // 32)
+        painter.setBrush(bg_color)
+        painter.setPen(outline_color)
+        painter.drawEllipse(margin, margin, size - 2 * margin, size - 2 * margin)
+
+        painter.setPen(text_color)
+        font = QFont("Arial", max(6, int(size * 0.40)), QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "OT")
+        painter.end()
+
+        icon.addPixmap(pixmap)
+
+    return icon
 
 
 class TurzxTray(QSystemTrayIcon):
