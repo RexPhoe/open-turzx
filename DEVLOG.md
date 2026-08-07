@@ -6,6 +6,39 @@
 
 ---
 
+## [2026-06-26] Instancia única: lock interno + un solo disparador de autostart
+
+**Problema:** al iniciar sesión arrancaban **dos** instancias de Open-Turzx, peleando por
+el USB de la pantalla.
+
+**Causa raíz:** había dos disparadores de arranque de sesión apuntando al mismo
+`run_open-turzx.sh`: el `exec-once` de Hyprland (`~/.config/hypr/autostart.lua`) y el
+XDG autostart (`~/.config/autostart/open-turzx.desktop`). Ambos `run_open-turzx.sh` entran
+en el bucle de espera de la bandeja (hasta 30 s) **antes** de llegar a `python -m open_turzx`,
+así que el guard `pgrep -f '[-]m open_turzx'` del exec-once no detectaba al gemelo todavía
+en bash → carrera → dos procesos. (El `open-turzx-monitor.timer` no influye: es idempotente
+vía `pgrep` y solo registra "already running".)
+
+**Solución (dos capas):**
+
+1. **Código — lock de instancia única** (`open_turzx/single_instance.py`): clase
+   `SingleInstance` basada en `QLocalServer`/`QLocalSocket` (patrón QtSingleApplication).
+   El primer proceso posee el socket (`open-turzx-<uid>`); cualquier lanzamiento posterior
+   detecta al primario, le reenvía su intención y sale. Robusto ante locks obsoletos tras
+   crash (socket de FS + `removeServer()` → el siguiente arranque lo reclama). Como bonus,
+   un segundo `--settings` (run_open-turzx_settings.sh) hace que la instancia viva abra su
+   ventana de ajustes en vez de morir en silencio. Cableado en `daemon.main()` justo tras
+   crear `QApplication`. Funciona headless (QtNetwork no depende del display).
+2. **Sistema — un único disparador de sesión:** se elimina el `exec-once` de open-turzx de
+   `~/.config/hypr/autostart.lua`. Queda el XDG autostart como único lanzador, coherente con
+   el checkbox "Run at startup" que la propia app gestiona vía `autostart.py`.
+
+**Verificado:** tests aislados del guard (primario/secundario, recuperación tras `os._exit`,
+handoff de `--settings`); `hyprctl reload` + `configerrors` limpios; una sola instancia tras
+recargar. El lock queda activo en el siguiente arranque de la app.
+
+---
+
 ## [2026-06-24] Sensor de consumo en vatios (backend Power)
 
 Nuevo `open_turzx/sensors/power.py` (`PowerSensors`), cross-platform (Windows + Linux).

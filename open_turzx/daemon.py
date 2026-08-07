@@ -27,6 +27,7 @@ from .images import to_jpeg
 from .modes import ModeController
 from .renderer import Renderer
 from .sensors.base import SensorManager
+from .single_instance import SingleInstance
 from .transitions import apply as apply_transition, resolve as resolve_transition
 from .tray import TurzxTray
 
@@ -359,10 +360,29 @@ def main() -> None:
     app.setDesktopFileName("open-turzx")
     app.setQuitOnLastWindowClosed(False)
 
+    # Single-instance guard: if Open-Turzx is already running, hand off our
+    # intent (open settings vs. plain launch) to it and exit. This makes a
+    # second launch — whether from a stray autostart entry or a manual start —
+    # harmless instead of spawning a duplicate that fights over the USB screen.
+    want_settings = "--settings" in sys.argv
+    guard = SingleInstance()
+    if not guard.try_acquire("open-settings" if want_settings else "ping"):
+        log.info("Another Open-Turzx instance is already running; exiting.")
+        return
+
     daemon = TurzxDaemon()
     daemon.start()
 
-    if "--settings" in sys.argv:
+    # A later launch (e.g. run_open-turzx_settings.sh) relays "open-settings"
+    # through the guard so the existing instance surfaces its window.
+    guard.message_received.connect(
+        lambda msg: daemon.show_settings() if msg == "open-settings" else None
+    )
+
+    if want_settings:
         QTimer.singleShot(0, daemon.show_settings)
+
+    # Keep the guard alive for the whole process lifetime.
+    app._single_instance_guard = guard  # type: ignore[attr-defined]
 
     sys.exit(app.exec())
