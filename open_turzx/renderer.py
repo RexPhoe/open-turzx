@@ -354,8 +354,8 @@ class Renderer:
             if frame is not None:
                 return self._apply_video_fx(self._place_bg_media(frame, bg), bg, fx)
 
-        # Default fallback
-        return Image.new("RGB", (self.width, self.height), (15, 15, 25))
+        # No media to show (empty path, unreadable file, no OpenCV): use the panel color
+        return Image.new("RGB", (self.width, self.height), tuple(bg.color[:3]))
 
     def _place_bg_media(self, src: Image.Image, bg) -> Image.Image:
         """Resize source to target rect preserving aspect ratio, paste on canvas."""
