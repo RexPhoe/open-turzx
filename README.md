@@ -54,6 +54,8 @@ Open-Turzx is an open-source driver and dashboard for the **TURZX 2.8" round USB
 - **Real-time system monitoring** — CPU (with turbo frequency), GPU (NVIDIA full support; Intel/AMD partial), RAM, disk, network, battery, uptime, clock, and game FPS via RTSS/MangoHud.
 - **Visual layout editor** — Drag-and-drop canvas that renders pixel-perfect with Pillow (same pipeline as the device). Font selection, color picker, gradients, stroke, arc/linear bars, z-order, layer locking, multi-selection.
 - **Backgrounds** — Solid color, image, or looping video (MP4/AVI/MKV via OpenCV). Crop and position controls, brightness/contrast.
+- **Metric-driven video** — Scale, rotation, opacity and playback speed of a video background, each settable directly or mapped from any sensor through video rules (e.g. CPU load → playback speed), with smoothing.
+- **Element opacity** — Every element has its own 0–100 % opacity.
 - **Display modes** — Static (fixed layout), rotative (cycle with transitions), reactive (auto-switch by foreground app).
 - **17 transitions** — Fade, dissolve, zoom, swipe, wipe, iris, blinds, checkerboard, random.
 - **Unit conversion** — Display sensor values in your preferred unit (GHz↔MHz, °C↔°F, GB↔MB, etc.), plus per-threshold value styles (e.g. red CPU temp above 80 °C).

@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QTableWidget,
     QTableWidgetItem,
+    QHeaderView,
 )
 
 from ..autostart import is_enabled as autostart_is_enabled, enable as autostart_enable, disable as autostart_disable
@@ -47,6 +48,8 @@ from ..config import (
     LayoutElement,
     SensorStyleRule,
     Background,
+    VideoRule,
+    VIDEO_FX_TARGETS,
     ModeConfig,
     ReactiveRule,
     RotativeConfig,
@@ -133,6 +136,7 @@ class PropertiesPanel(QScrollArea):
         self._element: LayoutElement | None = None
         self._updating = False
         self._sensor_units: dict[str, str] = {}  # sensor_id -> native unit
+        self._sensor_ids: list[str] = sorted(sensor_ids or [])
         self.setWidgetResizable(True)
         self.setMinimumWidth(310)
         self.setMaximumWidth(400)
@@ -170,6 +174,11 @@ class PropertiesPanel(QScrollArea):
             pos_l.addWidget(QLabel(label))
             pos_l.addWidget(sp)
         common.addRow(_("Pos:"), pos_w)
+        self._sp_opacity = QSpinBox()
+        self._sp_opacity.setRange(0, 100)
+        self._sp_opacity.setValue(100)
+        self._sp_opacity.setSuffix(" %")
+        common.addRow(_("Opacity:"), self._sp_opacity)
         eg.addLayout(common)
 
         # -- text fields --
@@ -240,7 +249,7 @@ class PropertiesPanel(QScrollArea):
         self._sp_fill_alpha = QSpinBox()
         self._sp_fill_alpha.setRange(0, 255)
         self._sp_fill_alpha.setValue(255)
-        shf.addRow(_("Opacity:"), self._sp_fill_alpha)
+        shf.addRow(_("Fill alpha:"), self._sp_fill_alpha)
         eg.addWidget(self._w_shape)
 
         # -- bar / arc_bar fields (sensor-linked) --
@@ -432,6 +441,7 @@ class PropertiesPanel(QScrollArea):
         bpl.addWidget(self._ed_bg_path)
         bpl.addWidget(self._btn_bg_browse)
         bf.addRow(_("Path:"), bpc)
+        bgl.addLayout(bf)
 
         # Media placement controls (visible for image/video)
         self._w_bg_crop = QWidget()
@@ -463,14 +473,75 @@ class PropertiesPanel(QScrollArea):
         self._w_bg_crop.setVisible(False)
         bgl.addWidget(self._w_bg_crop)
 
-        bgl.addLayout(bf)
+        # Video transform + metric-driven rules (visible for video)
+        self._w_bg_video = QWidget()
+        vf = QFormLayout(self._w_bg_video)
+        vf.setSpacing(3)
+        vf.setContentsMargins(0, 0, 0, 0)
+        self._sp_vid_scale = QDoubleSpinBox()
+        self._sp_vid_scale.setRange(0.05, 5.0)
+        self._sp_vid_scale.setSingleStep(0.05)
+        self._sp_vid_scale.setSuffix("\u00d7")
+        vf.addRow(_("Scale:"), self._sp_vid_scale)
+        self._sp_vid_rot = QDoubleSpinBox()
+        self._sp_vid_rot.setRange(-360.0, 360.0)
+        self._sp_vid_rot.setSingleStep(5.0)
+        self._sp_vid_rot.setSuffix("\u00b0")
+        vf.addRow(_("Rotation:"), self._sp_vid_rot)
+        self._sp_vid_opacity = QSpinBox()
+        self._sp_vid_opacity.setRange(0, 100)
+        self._sp_vid_opacity.setSuffix(" %")
+        vf.addRow(_("Opacity:"), self._sp_vid_opacity)
+        self._sp_vid_speed = QDoubleSpinBox()
+        self._sp_vid_speed.setRange(0.0, 8.0)
+        self._sp_vid_speed.setSingleStep(0.1)
+        self._sp_vid_speed.setSuffix("\u00d7")
+        vf.addRow(_("Speed:"), self._sp_vid_speed)
+        self._sp_vid_smooth = QDoubleSpinBox()
+        self._sp_vid_smooth.setRange(0.0, 5.0)
+        self._sp_vid_smooth.setSingleStep(0.1)
+        self._sp_vid_smooth.setSuffix(" s")
+        self._sp_vid_smooth.setToolTip(_("Time to ease towards rule values (0 = instant)"))
+        vf.addRow(_("Smoothing:"), self._sp_vid_smooth)
+
+        self._tbl_video_rules = QTableWidget(0, 6)
+        self._tbl_video_rules.setHorizontalHeaderLabels(
+            [_("Sensor"), _("Property"), _("In min"), _("In max"), _("Out min"), _("Out max")]
+        )
+        self._tbl_video_rules.setToolTip(
+            _(
+                "A rule applies from In min upward; below it the base value is used.\n"
+                "Between In min and In max the output moves linearly from Out min to Out max, "
+                "then stays at Out max.\n"
+                "In min = In max makes a step that yields Out max.\n"
+                "Several rules on one property: the active one with the highest In min wins.\n"
+                "Units: scale \u00d7, rotation \u00b0, opacity %, speed \u00d7."
+            )
+        )
+        self._tbl_video_rules.setMinimumHeight(120)
+        self._tbl_video_rules.verticalHeader().setVisible(False)
+        vr_header = self._tbl_video_rules.horizontalHeader()
+        vr_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        vr_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        vf.addRow(QLabel(_("Video rules:")))
+        vf.addRow(self._tbl_video_rules)
+        vrules_row = QWidget()
+        vrules_l = QHBoxLayout(vrules_row)
+        vrules_l.setContentsMargins(0, 0, 0, 0)
+        self._btn_vrule_add = QPushButton(_("Add"))
+        self._btn_vrule_remove = QPushButton(_("Remove"))
+        vrules_l.addWidget(self._btn_vrule_add)
+        vrules_l.addWidget(self._btn_vrule_remove)
+        vf.addRow(vrules_row)
+        self._w_bg_video.setVisible(False)
+        bgl.addWidget(self._w_bg_video)
 
         root.addWidget(grp_bg)
         root.addStretch()
         self.setWidget(container)
 
         # ── Signals ──────────────────────────────────
-        for sp in (self._sp_x, self._sp_y, self._sp_z, self._sp_font):
+        for sp in (self._sp_x, self._sp_y, self._sp_z, self._sp_font, self._sp_opacity):
             sp.valueChanged.connect(self._on_elem)
         self._ed_text.textChanged.connect(self._on_elem)
         self._cb_sensor.currentTextChanged.connect(self._on_sensor_id_changed)
@@ -530,6 +601,17 @@ class PropertiesPanel(QScrollArea):
         self._btn_bg_browse.clicked.connect(self._pick_bg)
         for sp in (self._sp_bg_x, self._sp_bg_y, self._sp_bg_w, self._sp_bg_h):
             sp.valueChanged.connect(self._on_bg)
+        for sp in (
+            self._sp_vid_scale,
+            self._sp_vid_rot,
+            self._sp_vid_opacity,
+            self._sp_vid_speed,
+            self._sp_vid_smooth,
+        ):
+            sp.valueChanged.connect(self._on_bg)
+        self._tbl_video_rules.itemChanged.connect(self._on_bg)
+        self._btn_vrule_add.clicked.connect(self._add_video_rule)
+        self._btn_vrule_remove.clicked.connect(self._remove_video_rule)
 
     def _on_gradient_toggle(self, checked: bool):
         self._w_gradient.setVisible(checked)
@@ -644,6 +726,77 @@ class PropertiesPanel(QScrollArea):
             )
             self._on_elem()
 
+    def _insert_video_rule_row(self, rule: VideoRule) -> None:
+        tbl = self._tbl_video_rules
+        row = tbl.rowCount()
+        tbl.insertRow(row)
+        cb_sensor = QComboBox()
+        cb_sensor.setEditable(True)
+        cb_sensor.addItems(self._sensor_ids)
+        idx = cb_sensor.findText(rule.sensor_id)
+        if idx >= 0:
+            cb_sensor.setCurrentIndex(idx)
+        else:
+            cb_sensor.setEditText(rule.sensor_id)
+        cb_target = QComboBox()
+        cb_target.addItems(list(VIDEO_FX_TARGETS))
+        cb_target.setCurrentIndex(max(0, cb_target.findText(rule.target)))
+        cb_sensor.currentTextChanged.connect(self._on_bg)
+        cb_target.currentTextChanged.connect(self._on_bg)
+        tbl.setCellWidget(row, 0, cb_sensor)
+        tbl.setCellWidget(row, 1, cb_target)
+        for col, value in enumerate((rule.in_min, rule.in_max, rule.out_min, rule.out_max), 2):
+            tbl.setItem(row, col, QTableWidgetItem(f"{value:g}"))
+
+    def _populate_video_rules(self, rules: list[VideoRule]) -> None:
+        self._tbl_video_rules.blockSignals(True)
+        self._tbl_video_rules.setRowCount(0)
+        for rule in rules:
+            self._insert_video_rule_row(rule)
+        self._tbl_video_rules.blockSignals(False)
+
+    def _read_video_rules(self) -> list[VideoRule]:
+        tbl = self._tbl_video_rules
+        rules: list[VideoRule] = []
+        for row in range(tbl.rowCount()):
+            cb_sensor = tbl.cellWidget(row, 0)
+            cb_target = tbl.cellWidget(row, 1)
+            try:
+                nums = [float(tbl.item(row, col).text()) for col in range(2, 6)]
+            except (AttributeError, ValueError):
+                continue
+            rules.append(
+                VideoRule(
+                    sensor_id=cb_sensor.currentText() if cb_sensor else "",
+                    target=cb_target.currentText() if cb_target else "speed",
+                    in_min=nums[0],
+                    in_max=nums[1],
+                    out_min=nums[2],
+                    out_max=nums[3],
+                )
+            )
+        return rules
+
+    def _add_video_rule(self) -> None:
+        if self._updating:
+            return
+        sensor = "cpu.percent" if "cpu.percent" in self._sensor_ids else ""
+        self._tbl_video_rules.blockSignals(True)
+        self._insert_video_rule_row(VideoRule(sensor_id=sensor))
+        self._tbl_video_rules.blockSignals(False)
+        self._on_bg()
+
+    def _remove_video_rule(self) -> None:
+        if self._updating:
+            return
+        # Clicks on the combo cells don't move the current row: fall back to the last one
+        row = self._tbl_video_rules.currentRow()
+        if row < 0:
+            row = self._tbl_video_rules.rowCount() - 1
+        if row >= 0:
+            self._tbl_video_rules.removeRow(row)
+            self._on_bg()
+
     # ── public API ──
 
     def set_element(self, element: LayoutElement | None) -> None:
@@ -658,6 +811,7 @@ class PropertiesPanel(QScrollArea):
             self._sp_x.setValue(element.x)
             self._sp_y.setValue(element.y)
             self._sp_z.setValue(element.z)
+            self._sp_opacity.setValue(element.opacity)
 
             is_t = element.type == "text"
             is_s = element.type == "sensor"
@@ -777,6 +931,13 @@ class PropertiesPanel(QScrollArea):
         self._sp_bg_w.setValue(bg.crop_w)
         self._sp_bg_h.setValue(bg.crop_h)
         self._w_bg_crop.setVisible(bg.type != "solid")
+        self._sp_vid_scale.setValue(bg.video_scale)
+        self._sp_vid_rot.setValue(bg.video_rotation)
+        self._sp_vid_opacity.setValue(bg.video_opacity)
+        self._sp_vid_speed.setValue(bg.video_speed)
+        self._sp_vid_smooth.setValue(bg.video_smoothing)
+        self._populate_video_rules(bg.video_rules)
+        self._w_bg_video.setVisible(bg.type == "video")
         self._updating = False
 
     def update_sensor_units(self, unit_map: dict[str, str]) -> None:
@@ -792,6 +953,7 @@ class PropertiesPanel(QScrollArea):
         el.x = self._sp_x.value()
         el.y = self._sp_y.value()
         el.z = self._sp_z.value()
+        el.opacity = self._sp_opacity.value()
         if el.type == "text":
             el.text = self._ed_text.text()
         elif el.type == "sensor":
@@ -849,6 +1011,7 @@ class PropertiesPanel(QScrollArea):
             return
         is_media = not self._r_solid.isChecked()
         self._w_bg_crop.setVisible(is_media)
+        self._w_bg_video.setVisible(self._r_video.isChecked())
         self._on_bg()
 
     def _on_bg(self, *_):
@@ -867,6 +1030,12 @@ class PropertiesPanel(QScrollArea):
             crop_y=self._sp_bg_y.value(),
             crop_w=self._sp_bg_w.value(),
             crop_h=self._sp_bg_h.value(),
+            video_scale=self._sp_vid_scale.value(),
+            video_rotation=self._sp_vid_rot.value(),
+            video_opacity=self._sp_vid_opacity.value(),
+            video_speed=self._sp_vid_speed.value(),
+            video_smoothing=self._sp_vid_smooth.value(),
+            video_rules=self._read_video_rules(),
         )
         self.background_changed.emit(bg)
 

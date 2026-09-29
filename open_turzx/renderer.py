@@ -26,7 +26,7 @@ from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
-from .config import Layout, LayoutElement
+from .config import Background, Layout, LayoutElement, VIDEO_FX_TARGETS
 from .protocol import SCREEN_W, SCREEN_H
 from .sensors.base import SensorReading
 from .sensors.units import convert as convert_unit, get_strftime
@@ -197,8 +197,18 @@ class Renderer:
         self._video_path: str | None = None
         self._video_lock = threading.Lock()
         self._video_frame: Image.Image | None = None  # cached last frame
-        self._video_frame_time: float = 0.0  # when we last advanced
         self._video_native_fps: float = 0.0  # native fps read from the file
+        # Playback clock: _video_pos advances by dt * fps * speed; frames are
+        # decoded until _video_decoded (index of the cached frame) catches up.
+        self._video_pos: float = 0.0
+        self._video_decoded: int = -1
+        self._video_tick: float = 0.0
+
+        # Video transform, eased towards the rule targets every frame
+        self._fx_lock = threading.Lock()
+        self._video_fx: dict[str, float] | None = None
+        self._video_fx_tick: float = 0.0
+        self._sensor_values: dict[str, SensorReading] = {}
 
         # Cached overlay — rebuilt only at sensor_rate
         self._overlay: Image.Image | None = None
@@ -222,6 +232,7 @@ class Renderer:
         RGBA image that gets composited on top of the background each frame.
         Real-time sensors (clock, date) are skipped here — drawn in compose_frame.
         """
+        self._sensor_values = sensor_values
         overlay = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
@@ -229,18 +240,7 @@ class Renderer:
             # Skip real-time sensors — rendered per-frame instead
             if element.type == "sensor" and element.sensor_id in self._REALTIME_SENSORS:
                 continue
-            if element.type == "text":
-                self._draw_text(overlay, draw, element)
-            elif element.type == "sensor":
-                self._draw_sensor(overlay, draw, element, sensor_values)
-            elif element.type == "image":
-                self._draw_image(overlay, element)
-            elif element.type == "shape":
-                self._draw_shape(overlay, draw, element)
-            elif element.type == "bar":
-                self._draw_bar(overlay, draw, element, sensor_values)
-            elif element.type == "arc_bar":
-                self._draw_arc_bar(overlay, draw, element, sensor_values)
+            self._draw_element(overlay, draw, element, sensor_values)
 
         # Cache which elements need per-frame rendering
         self._realtime_elements = [
@@ -280,7 +280,10 @@ class Renderer:
                     )
                 except (KeyError, ValueError):
                     text = val
-                self._render_text_on(bg, draw, text, el)
+                self._with_opacity(
+                    bg, draw, el,
+                    lambda c, d, el=el, text=text: self._render_text_on(c, d, text, el),
+                )
 
         return self._apply_image_adjustments(bg, layout)
 
@@ -302,22 +305,11 @@ class Renderer:
         This is the all-in-one path used by the editor canvas timer
         which runs at ~5-10 FPS.  NOT used in the device render loop.
         """
-        bg = self._get_background(layout).copy()
+        bg = self._get_background(layout, sensor_values).copy()
         draw = ImageDraw.Draw(bg)
 
         for element in sorted(layout.elements, key=lambda e: e.z):
-            if element.type == "text":
-                self._draw_text(bg, draw, element)
-            elif element.type == "sensor":
-                self._draw_sensor(bg, draw, element, sensor_values)
-            elif element.type == "image":
-                self._draw_image(bg, element)
-            elif element.type == "shape":
-                self._draw_shape(bg, draw, element)
-            elif element.type == "bar":
-                self._draw_bar(bg, draw, element, sensor_values)
-            elif element.type == "arc_bar":
-                self._draw_arc_bar(bg, draw, element, sensor_values)
+            self._draw_element(bg, draw, element, sensor_values)
 
         return self._apply_image_adjustments(bg, layout)
 
@@ -334,15 +326,19 @@ class Renderer:
                 self._video_cap = None
                 self._video_path = None
             self._video_frame = None
-            self._video_frame_time = 0.0
+            self._video_decoded = -1
+        with self._fx_lock:
+            self._video_fx = None
         self._overlay = None
         self._static_bg = None
         self._static_bg_path = None
 
     # ── Background ──
 
-    def _get_background(self, layout: Layout) -> Image.Image:
-        """Return the current background frame (advances video by one frame)."""
+    def _get_background(
+        self, layout: Layout, sensor_values: dict[str, SensorReading] | None = None
+    ) -> Image.Image:
+        """Return the current background frame (advances the video clock)."""
         bg = layout.background
 
         if bg.type == "solid":
@@ -352,9 +348,11 @@ class Renderer:
             return self._get_static_bg(bg)
 
         elif bg.type == "video" and bg.path:
-            frame = self._read_video_frame(bg.path)
+            values = self._sensor_values if sensor_values is None else sensor_values
+            fx = self._step_video_fx(bg, values)
+            frame = self._read_video_frame(bg.path, fx["speed"])
             if frame is not None:
-                return self._place_bg_media(frame, bg)
+                return self._apply_video_fx(self._place_bg_media(frame, bg), bg, fx)
 
         # Default fallback
         return Image.new("RGB", (self.width, self.height), (15, 15, 25))
@@ -381,6 +379,92 @@ class Renderer:
         canvas.paste(resized, (ox, oy))
         return canvas
 
+    # ── Video transform (scale / rotation / opacity / speed) ──
+
+    def _video_fx_targets(
+        self, bg: Background, values: dict[str, SensorReading]
+    ) -> dict[str, float]:
+        """Base transform values with every matching video rule applied."""
+        fx = {
+            "scale": bg.video_scale,
+            "rotation": bg.video_rotation,
+            "opacity": float(bg.video_opacity),
+            "speed": bg.video_speed,
+        }
+        # Per target, the active rule (value >= in_min) with the highest in_min wins
+        winners: dict[str, tuple[float, float]] = {}
+        for rule in bg.video_rules:
+            if rule.target not in VIDEO_FX_TARGETS:
+                continue
+            reading = values.get(rule.sensor_id)
+            if reading is None:
+                continue
+            try:
+                value = float(reading.value)
+            except (TypeError, ValueError):
+                continue
+            if value < rule.in_min:
+                continue
+            best = winners.get(rule.target)
+            if best is None or rule.in_min >= best[0]:
+                winners[rule.target] = (rule.in_min, rule.map_value(value))
+        for target, (_, out) in winners.items():
+            fx[target] = out
+        return fx
+
+    def _step_video_fx(
+        self, bg: Background, values: dict[str, SensorReading]
+    ) -> dict[str, float]:
+        """Ease the current transform towards its targets (exponential, per frame).
+
+        Sensors refresh about once a second; without easing a rule-driven
+        scale or rotation would jump at every refresh.
+        """
+        target = self._video_fx_targets(bg, values)
+        now = time.monotonic()
+        with self._fx_lock:
+            dt = min(max(now - self._video_fx_tick, 0.0), 1.0)
+            self._video_fx_tick = now
+            if self._video_fx is None or bg.video_smoothing <= 0:
+                self._video_fx = target
+            else:
+                k = 1.0 - math.exp(-dt / bg.video_smoothing)
+                for key, value in target.items():
+                    self._video_fx[key] += (value - self._video_fx[key]) * k
+            return dict(self._video_fx)
+
+    def _apply_video_fx(
+        self, img: Image.Image, bg: Background, fx: dict[str, float]
+    ) -> Image.Image:
+        """Scale/rotate around the placement rect center, then fade over bg.color."""
+        scale = max(0.05, fx["scale"])
+        rot = fx["rotation"] % 360.0
+        fill = tuple(bg.color[:3])
+
+        if abs(scale - 1.0) > 1e-3 or min(rot, 360.0 - rot) > 0.01:
+            tw = bg.crop_w if bg.crop_w > 0 else self.width
+            th = bg.crop_h if bg.crop_h > 0 else self.height
+            cx = bg.crop_x + tw / 2
+            cy = bg.crop_y + th / 2
+            # Inverse mapping (output → source) for a clockwise rotation + scale
+            a = math.radians(rot)
+            cos_a, sin_a = math.cos(a) / scale, math.sin(a) / scale
+            img = img.transform(
+                img.size,
+                Image.AFFINE,
+                (
+                    cos_a, sin_a, cx - cos_a * cx - sin_a * cy,
+                    -sin_a, cos_a, cy + sin_a * cx - cos_a * cy,
+                ),
+                resample=Image.BILINEAR,
+                fillcolor=fill,
+            )
+
+        opacity = max(0.0, min(100.0, fx["opacity"])) / 100.0
+        if opacity < 0.999:
+            img = Image.blend(Image.new("RGB", img.size, fill), img, opacity)
+        return img
+
     def _get_static_bg(self, bg) -> Image.Image:
         """Load and cache a static image background."""
         path = bg.path
@@ -401,12 +485,16 @@ class Renderer:
         # Return a COPY so callers can draw on it without corrupting the cache
         return self._static_bg.copy()
 
-    def _read_video_frame(self, path: str) -> Image.Image | None:
-        """Read the next video frame at VIDEO_FPS_CAP rate (thread-safe).
+    # Frames decoded at most per call when playback runs ahead (high speed
+    # or a stalled caller); any larger backlog is dropped, not chased.
+    VIDEO_MAX_CATCHUP = 8
 
-        Between advances the last decoded frame is returned from cache,
-        so the render loop can run at 60 FPS while the video plays at
-        its natural rate (capped at 24 FPS).
+    def _read_video_frame(self, path: str, speed: float = 1.0) -> Image.Image | None:
+        """Advance the playback clock and return the current frame (thread-safe).
+
+        The clock moves at native_fps * speed, so the render loop can run at
+        60 FPS while the video plays at its own rate — faster (skipping frames),
+        slower, or paused (speed 0). Between advances the cached frame is reused.
         """
         try:
             import cv2
@@ -426,7 +514,9 @@ class Renderer:
                     self._video_cap = cv2.VideoCapture(path)
                     self._video_path = path
                     self._video_frame = None
-                    self._video_frame_time = 0.0
+                    self._video_pos = 0.0
+                    self._video_decoded = -1
+                    self._video_tick = now
                     # Read native fps from the container
                     native = self._video_cap.get(cv2.CAP_PROP_FPS)
                     self._video_native_fps = native if native > 0 else 0.0
@@ -436,44 +526,110 @@ class Renderer:
                         self._video_native_fps,
                     )
 
-                # Compute frame interval from native fps (fallback: VIDEO_FPS_CAP)
-                native = self._video_native_fps
-                frame_interval = 1.0 / (native if native > 0 else self.VIDEO_FPS_CAP)
-
                 if self._video_cap is None or not self._video_cap.isOpened():
                     return self._video_frame  # return last good frame if any
 
-                # If not enough time has passed, return cached frame
-                if (
-                    self._video_frame is not None
-                    and (now - self._video_frame_time) < frame_interval
-                ):
-                    return self._video_frame
+                # Advance the clock (dt capped so a long stall doesn't fast-forward)
+                fps = self._video_native_fps or self.VIDEO_FPS_CAP
+                dt = min(max(now - self._video_tick, 0.0), 0.25)
+                self._video_tick = now
+                self._video_pos += dt * fps * max(speed, 0.0)
 
-                # Advance to next frame
-                ret, frame = self._video_cap.read()
-                if not ret:
-                    # Loop back to start — try seek first
-                    self._video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ret, frame = self._video_cap.read()
-                if not ret:
-                    # Seek failed (H.265, VP9, etc.) — reopen from scratch
-                    self._video_cap.release()
-                    self._video_cap = cv2.VideoCapture(path)
-                    if self._video_cap.isOpened():
-                        ret, frame = self._video_cap.read()
-                if not ret:
-                    return self._video_frame  # return last good frame
+                if self._video_frame is None:
+                    steps = 1
+                else:
+                    steps = int(self._video_pos) - self._video_decoded
+                    if steps <= 0:
+                        return self._video_frame
+                    if steps > self.VIDEO_MAX_CATCHUP:
+                        steps = self.VIDEO_MAX_CATCHUP
+                        self._video_pos = float(self._video_decoded + steps)
+
+                frame = None
+                for i in range(steps):
+                    frame = self._next_video_frame(cv2, path, decode=i == steps - 1)
+                    if frame is False:
+                        return self._video_frame  # return last good frame
+                self._video_decoded += steps
 
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(frame)
-                self._video_frame = img
-                self._video_frame_time = now
+                self._video_frame = Image.fromarray(frame)
                 return self._video_frame
             except Exception:
                 return self._video_frame
 
+    def _next_video_frame(self, cv2, path: str, decode: bool):
+        """Step one frame, looping at EOF. Returns the BGR array when *decode*,
+        None when only skipped, or False on failure. Caller holds _video_lock."""
+        ok = self._video_cap.grab()
+        if not ok:
+            # Loop back to start — try seek first
+            self._video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ok = self._video_cap.grab()
+        if not ok:
+            # Seek failed (H.265, VP9, etc.) — reopen from scratch
+            self._video_cap.release()
+            self._video_cap = cv2.VideoCapture(path)
+            ok = self._video_cap.isOpened() and self._video_cap.grab()
+        if not ok:
+            return False
+        if not decode:
+            return None
+        ok, frame = self._video_cap.retrieve()
+        return frame if ok else False
+
     # ── Elements ──
+
+    def _draw_element(
+        self,
+        canvas: Image.Image,
+        draw: ImageDraw.ImageDraw,
+        el: LayoutElement,
+        values: dict[str, SensorReading],
+    ) -> None:
+        self._with_opacity(
+            canvas, draw, el, lambda c, d: self._draw_element_raw(c, d, el, values)
+        )
+
+    def _draw_element_raw(
+        self,
+        canvas: Image.Image,
+        draw: ImageDraw.ImageDraw,
+        el: LayoutElement,
+        values: dict[str, SensorReading],
+    ) -> None:
+        if el.type == "text":
+            self._draw_text(canvas, draw, el)
+        elif el.type == "sensor":
+            self._draw_sensor(canvas, draw, el, values)
+        elif el.type == "image":
+            self._draw_image(canvas, el)
+        elif el.type == "shape":
+            self._draw_shape(canvas, draw, el)
+        elif el.type == "bar":
+            self._draw_bar(canvas, draw, el, values)
+        elif el.type == "arc_bar":
+            self._draw_arc_bar(canvas, draw, el, values)
+
+    def _with_opacity(self, canvas, draw, el: LayoutElement, paint) -> None:
+        """Run paint(canvas, draw) honoring el.opacity.
+
+        Fully opaque elements draw straight onto the canvas; translucent ones
+        are drawn on their own layer, whose alpha is scaled before compositing.
+        """
+        opacity = max(0, min(100, el.opacity))
+        if opacity >= 100:
+            paint(canvas, draw)
+            return
+        if opacity == 0:
+            return
+        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        paint(layer, ImageDraw.Draw(layer))
+        layer.putalpha(layer.getchannel("A").point(lambda a: a * opacity // 100))
+        if canvas.mode == "RGBA":
+            canvas.alpha_composite(layer)
+        else:
+            canvas.paste(layer, (0, 0), layer)
 
     def _render_text_on(
         self,

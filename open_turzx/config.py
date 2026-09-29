@@ -55,6 +55,44 @@ def _atomic_write_json(path: Path, data: dict) -> None:
 _DEFAULT_LAYOUT_VERSION = 7  # bump when default_layout() changes
 
 
+VIDEO_FX_TARGETS = ("scale", "rotation", "opacity", "speed")
+
+
+@dataclass
+class VideoRule:
+    """Maps a sensor value onto one video property, from in_min upward.
+
+    A rule is active once the value reaches in_min; below it the rule is
+    ignored. Among the active rules of a target, the one with the highest
+    in_min wins (same as SensorStyleRule), so rules stack as a staircase;
+    with none active the background's base value applies. The value is
+    clamped to [in_min, in_max] and mapped linearly onto [out_min, out_max];
+    with in_min == in_max the rule is a plain step that yields out_max.
+    """
+
+    sensor_id: str = "cpu.percent"
+    target: str = "speed"  # one of VIDEO_FX_TARGETS
+    in_min: float = 0.0
+    in_max: float = 100.0
+    out_min: float = 1.0
+    out_max: float = 2.0
+
+    def map_value(self, value: float) -> float:
+        if self.in_max == self.in_min:
+            t = 1.0 if value >= self.in_min else 0.0
+        else:
+            t = (value - self.in_min) / (self.in_max - self.in_min)
+            t = max(0.0, min(1.0, t))
+        return self.out_min + (self.out_max - self.out_min) * t
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> VideoRule:
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
 @dataclass
 class Background:
     type: str = "solid"  # "solid", "image", "video"
@@ -65,13 +103,26 @@ class Background:
     crop_y: int = 0
     crop_w: int = 0  # 0 = full screen width
     crop_h: int = 0  # 0 = full screen height
+    # Video transform — base values, overridden per property by video_rules
+    video_scale: float = 1.0  # around the placement rect center
+    video_rotation: float = 0.0  # degrees clockwise
+    video_opacity: int = 100  # 0-100 %, blended over `color`
+    video_speed: float = 1.0  # playback rate multiplier (0 = paused)
+    video_smoothing: float = 0.4  # seconds to ease towards rule targets
+    video_rules: list[VideoRule] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        data["video_rules"] = [r.to_dict() for r in self.video_rules]
+        return data
 
     @classmethod
     def from_dict(cls, d: dict) -> Background:
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        data = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        data["video_rules"] = [
+            VideoRule.from_dict(r) for r in data.get("video_rules", []) if isinstance(r, dict)
+        ]
+        return cls(**data)
 
 
 @dataclass
@@ -134,6 +185,8 @@ class LayoutElement:
     bar_start_angle: int = 135  # start angle for arc (degrees, 0=right, CCW)
     bar_sweep_angle: int = 270  # total arc sweep (degrees)
     bar_corner_radius: int = 0  # 0 = square caps/corners; >0 = rounded
+    # whole-element opacity
+    opacity: int = 100  # 0-100 %
     # lock
     locked: bool = False  # if True, element cannot be dragged in editor
 

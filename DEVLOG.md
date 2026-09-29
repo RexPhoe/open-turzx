@@ -6,6 +6,38 @@
 
 ---
 
+## [2026-09-29] Reglas de vídeo por métricas + opacidad por elemento
+
+**Vídeo de fondo** (`Background` en `config.py`): nuevos valores base `video_scale`,
+`video_rotation` (° horario), `video_opacity` (%, fundido sobre `color`), `video_speed`
+(× nativo, 0 = pausa) y `video_smoothing` (s). `video_rules` es una lista de `VideoRule`
+(`sensor_id`, `target`, `in_min/in_max → out_min/out_max`). Una regla **solo actúa a
+partir de `in_min`**; entre `in_min` e `in_max` interpola linealmente de `out_min` a
+`out_max` y por encima se queda en `out_max`. Con `in_min == in_max` es un escalón que da
+`out_max`. Si varias reglas de la misma propiedad están activas, gana la de `in_min` más
+alto (igual que `SensorStyleRule`); si no hay ninguna activa, se usa el valor base. Así se
+pueden encadenar escaleras (p. ej. temperatura → 1× / 1,2× / 1,4×). La primera versión
+("gana la última de la lista", aplicando reglas por debajo de su rango) no permitía
+escaleras: a 40 °C devolvía el valor del escalón de 66 °C.
+
+- Suavizado exponencial por fotograma (`Renderer._step_video_fx`): los sensores refrescan
+  ~1 vez/s y sin él la escala o la rotación darían saltos.
+- Escala y rotación en una sola `Image.transform(AFFINE)` alrededor del centro del
+  rectángulo de colocación, rellenando con `color`.
+- La velocidad exige un reloj de reproducción: `_video_pos += dt · fps_nativo · speed` y se
+  decodifica hasta alcanzarlo (`grab()` para los saltados, `retrieve()` solo el último),
+  con un tope de 8 frames por llamada. Antes se avanzaba 1 frame por intervalo, lo que
+  impedía pasar de la frecuencia del bucle de render. Los dos hilos que leen el vídeo
+  (render + canvas del editor) comparten el reloj, así que no se duplica la velocidad.
+- Coste medido: 1,5 ms/frame sin efectos → 5,5 ms con escala + rotación + opacidad.
+
+**Opacidad de elementos**: `LayoutElement.opacity` (0–100 %), para todos los tipos incluido
+el reloj en tiempo real. Si es < 100, el elemento se pinta en su propia capa RGBA y se
+escala su alfa antes de componer. La despacha `_draw_element`, que ahora usan tanto
+`update_overlay` como `render_image`, en lugar de la cadena `if/elif` duplicada.
+La opacidad de relleno de las formas (`fill_alpha`) se mantiene y pasa a llamarse
+"Fill alpha" en la UI para no confundirla con la nueva.
+
 ## [2026-09-05] Sensor de FPS: leer solo la cola del CSV de MangoHud
 
 **Problema:** el sensor releía el log **entero** de MangoHud en cada ciclo de render
