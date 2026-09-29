@@ -6,6 +6,42 @@
 
 ---
 
+## [2026-09-05] Sensor de FPS: leer solo la cola del CSV de MangoHud
+
+**Problema:** el sensor releía el log **entero** de MangoHud en cada ciclo de render
+(`refresh_rate: 1.0` → una vez por segundo). MangoHud escribe con `log_interval=100`,
+o sea ~10 filas/s ≈ 3,4 MB por hora de juego, y el log de una sesión no se rota.
+Medido sobre CSV sintéticos con el formato real: **48 ms tras 1 h y 145 ms tras 3 h**,
+creciendo linealmente. En partidas largas (RDR2, Rise of the Tomb Raider) eso frena
+el bucle de refresco de la pantalla justo cuando el dato de FPS importa.
+
+**Causa raíz:** `_parse_mangohud_csv()` hacía `f.readlines()` + `csv.DictReader` sobre
+todo el fichero para quedarse solo con la última fila.
+
+**Solución** (`open_turzx/sensors/fps.py`):
+
+1. `_fps_column_index()` localiza la columna `fps` leyendo únicamente las 4 primeras
+   líneas y **cachea el índice por `(ruta, inodo)`** — la cabecera no cambia dentro de
+   un mismo fichero, y el inodo detecta la rotación a un log nuevo. Sigue soportando
+   los dos formatos de MangoHud (v0.7.x: cabecera en la línea 1; v0.8.x: dos filas de
+   info de sistema y luego la cabecera).
+2. `_parse_mangohud_csv()` hace `seek()` a los últimos 8 KB, descarta la primera línea
+   (el `seek` la parte por la mitad) y recorre hacia atrás hasta la primera fila que
+   parsee. Si el fichero no acaba en `\n`, descarta también la última: MangoHud está
+   escribiéndola y un número cortado (`120.5` → `1`) daría un FPS falso.
+3. Fuera el `import csv` del módulo, ya no se usa.
+
+**Resultado:** mismo valor devuelto (verificado contra el parser anterior sobre el log
+real y los sintéticos de 1 h y 3 h), **145 ms → 0,04 ms**, y coste constante sea cual sea
+la duración de la partida. Casos límite verificados: fichero vacío, solo cabecera, una
+sola fila, fila sin cerrar, número cortado a mitad, formato v0.7, CSV sin cabecera,
+columna `fps` que no es la primera, y log caducado (> `max_age_seconds` → 0.0).
+
+**Nota de entorno:** el sensor no leía nada en RDR2 ni en Rise of the Tomb Raider por una
+causa ajena al código — sus entradas de Lutris llevaban `MANGOHUD: '0'` en el env del
+juego, que pisa el `MANGOHUD: '1'` global de `~/.local/share/lutris/system.yml`. Detalle
+en `~/.claude/projects/omarchy/bucle.md` [2026-09-05].
+
 ## [2026-06-26] Instancia única: lock interno + un solo disparador de autostart
 
 **Problema:** al iniciar sesión arrancaban **dos** instancias de Open-Turzx, peleando por

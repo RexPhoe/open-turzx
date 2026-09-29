@@ -13,7 +13,6 @@ Or Open-Turzx will auto-detect MangoHud benchmark logs in ~/mangohud_logs/ and /
 
 from __future__ import annotations
 
-import csv
 import logging
 import os
 import struct
@@ -352,68 +351,87 @@ def _read_mangohud_log() -> float:
     return 0.0
 
 
-def _parse_mangohud_csv(path: Path, max_age_seconds: int = 10) -> float:
-    """Parse a MangoHud CSV log and return the latest FPS value.
+# MangoHud appends ~10 rows/s, so a long session leaves a multi-MB log and
+# re-reading it whole once per render cycle costs ~150 ms after three hours.
+# The header never changes for a given file, so cache its fps column per
+# (path, inode) and read only the tail on each poll.
+_fps_column_cache: dict[tuple[str, int], int] = {}
+_CSV_TAIL_BYTES = 8192
 
-    Handles two MangoHud CSV formats:
-    - v0.7.x: First row = column headers (fps,frametime,...)
-    - v0.8.x: Three header rows (system info, then fps,frametime,...)
-      The third row contains the actual column names.
 
-    Only considers entries written in the last max_age_seconds.
+def _fps_column_index(path: Path, inode: int) -> int:
+    """Return the index of the ``fps`` column, reading only the header rows.
+
+    MangoHud writes two CSV shapes:
+    - v0.7.x: first row = column headers (fps,frametime,...)
+    - v0.8.x: two rows of system info, then the column headers
+
+    Returns -1 when no header row is found.
     """
-    if not path.exists():
+    key = (str(path), inode)
+    cached = _fps_column_cache.get(key)
+    if cached is not None:
+        return cached
+
+    index = -1
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for _ in range(4):
+            line = f.readline()
+            if not line:
+                break
+            cols = [c.strip().lower() for c in line.split(",")]
+            if "fps" in cols and "frametime" in cols:
+                index = cols.index("fps")
+                break
+
+    if len(_fps_column_cache) > 32:
+        _fps_column_cache.clear()
+    _fps_column_cache[key] = index
+    return index
+
+
+def _parse_mangohud_csv(path: Path, max_age_seconds: int = 10) -> float:
+    """Return the latest FPS value from a MangoHud CSV log.
+
+    Only considers logs written in the last max_age_seconds.  Reads just the
+    last few KB so the cost stays flat however long the game has been running.
+    """
+    try:
+        st = path.stat()
+    except OSError:
         return 0.0
 
-    file_age = time.time() - path.stat().st_mtime
-    if file_age > max_age_seconds:
+    if time.time() - st.st_mtime > max_age_seconds:
         return 0.0
 
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-
-        if len(lines) < 2:
+        index = _fps_column_index(path, st.st_ino)
+        if index < 0:
             return 0.0
 
-        # MangoHud v0.8.x: third line is the actual header row
-        # MangoHud v0.7.x: first line is the header row
-        header_line = 0
-        for i, line in enumerate(lines[:4]):
-            if "fps" in line.lower() and "frametime" in line.lower():
-                header_line = i
-                break
+        offset = max(0, st.st_size - _CSV_TAIL_BYTES)
+        with open(path, "rb") as f:
+            f.seek(offset)
+            tail = f.read().decode("utf-8", errors="replace")
 
-        if header_line == 0 and len(lines) <= 2:
-            return 0.0
+        lines = tail.splitlines()
+        if offset > 0 and lines:
+            del lines[0]  # the seek cut this row in half
+        if not tail.endswith("\n") and lines:
+            del lines[-1]  # MangoHud is mid-append; that row is incomplete
 
-        # Parse with csv.DictReader, skipping lines before the header
-        import io
-        csv_data = "".join(lines[header_line:])
-        reader = csv.DictReader(io.StringIO(csv_data))
-        if reader.fieldnames is None:
-            return 0.0
-
-        fps_col = None
-        for col in reader.fieldnames:
-            if col.strip().lower() == "fps":
-                fps_col = col
-                break
-
-        if fps_col is None:
-            return 0.0
-
-        last_fps = 0.0
-        for row in reader:
+        for line in reversed(lines):
+            cols = line.split(",")
+            if len(cols) <= index:
+                continue
             try:
-                last_fps = float(row[fps_col])
-            except (ValueError, KeyError):
+                return float(cols[index])
+            except ValueError:
                 continue
 
-        return last_fps
+        return 0.0
     except Exception:
         return 0.0
-
 
 def _read_mangohud_shm() -> float:
     """Try to read FPS from MangoHud shared memory.
